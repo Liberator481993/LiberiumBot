@@ -74,3 +74,15 @@ persistent storage and be backed up.
 - The bot checks membership at the time a user opens protected sections.
 - If membership checks fail for everyone, verify the channel ID and that the bot is an administrator.
 - The first version uses long polling. Do not run two polling instances with the same token at the same time.
+
+
+## Temporary GitHub Actions test session
+
+The `.github/workflows/manual-bot-test.yml` workflow can be started manually from the
+Actions tab after adding repository secrets `BOT_TOKEN` and `ADMIN_IDS`.
+It starts one temporary long-polling session for up to 330 minutes. Do not run it while
+another instance of this bot is polling with the same token.
+
+This workflow is for a short test only, not production hosting. The runner is temporary
+and its local SQLite database is discarded after the job ends. Use a persistent always-on
+host and persistent storage for a live bot.

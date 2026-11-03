@@ -41,11 +41,18 @@ async def init_db(database_path: Path) -> None:
                 url TEXT NOT NULL DEFAULT '',
                 file_id TEXT NOT NULL DEFAULT '',
                 file_name TEXT NOT NULL DEFAULT '',
+                image_file_id TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL,
                 UNIQUE(category, slug)
             )
             """
         )
+        columns = await db.execute("PRAGMA table_info(content_items)")
+        column_names = {row[1] for row in await columns.fetchall()}
+        if "image_file_id" not in column_names:
+            await db.execute(
+                "ALTER TABLE content_items ADD COLUMN image_file_id TEXT NOT NULL DEFAULT ''"
+            )
         await db.commit()
 
 
@@ -121,15 +128,16 @@ async def upsert_content(
     url: str,
     file_id: str,
     file_name: str,
+    image_file_id: str = "",
 ) -> None:
     async with aiosqlite.connect(database_path) as db:
         await db.execute(
             """
             INSERT INTO content_items (
                 category, slug, title_ru, title_en, body_ru, body_en,
-                version, url, file_id, file_name, updated_at
+                version, url, file_id, file_name, image_file_id, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(category, slug) DO UPDATE SET
                 title_ru = excluded.title_ru,
                 title_en = excluded.title_en,
@@ -139,11 +147,12 @@ async def upsert_content(
                 url = excluded.url,
                 file_id = excluded.file_id,
                 file_name = excluded.file_name,
+                image_file_id = excluded.image_file_id,
                 updated_at = excluded.updated_at
             """,
             (
                 category, slug, title_ru, title_en, body_ru, body_en,
-                version, url, file_id, file_name, _now(),
+                version, url, file_id, file_name, image_file_id, _now(),
             ),
         )
         await db.commit()

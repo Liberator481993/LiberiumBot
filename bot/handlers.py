@@ -10,7 +10,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from bot.config import Settings
 from bot.db import (
@@ -53,6 +53,13 @@ class ContentWizard(StatesGroup):
 
 class BroadcastWizard(StatesGroup):
     message = State()
+
+
+class ChannelPostWizard(StatesGroup):
+    text = State()
+    photo = State()
+    button = State()
+    confirm = State()
 
 
 def _language(user: dict[str, Any] | None) -> str:
@@ -677,6 +684,142 @@ async def admin_broadcast_send(
     await message.answer(
         tr(language, "admin_broadcast_done", sent=sent, failed=failed)
     )
+
+
+
+@router.callback_query(F.data == "adm:channel_post")
+async def admin_channel_post_start(
+    callback: CallbackQuery, bot: Bot, settings: Settings, state: FSMContext
+) -> None:
+    allowed, language = await _admin_callback_guard(callback, bot, settings)
+    if not allowed:
+        return
+    await state.clear()
+    await state.set_state(ChannelPostWizard.text)
+    await callback.answer()
+    if callback.message:
+        await callback.message.answer(tr(language, "admin_post_text"))
+
+
+@router.message(ChannelPostWizard.text)
+async def channel_post_text(message: Message, state: FSMContext, settings: Settings) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await state.clear()
+        return
+    if not message.text or not message.text.strip():
+        user = await get_user(settings.database_path, message.from_user.id)
+        await message.answer(tr(_language(user), "admin_post_text"))
+        return
+    await state.update_data(post_text=message.text.strip())
+    await state.set_state(ChannelPostWizard.photo)
+    user = await get_user(settings.database_path, message.from_user.id)
+    await message.answer(tr(_language(user), "admin_post_photo"))
+
+
+@router.message(ChannelPostWizard.photo)
+async def channel_post_photo(message: Message, state: FSMContext, settings: Settings) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await state.clear()
+        return
+    photo_id = ""
+    if message.photo:
+        photo_id = message.photo[-1].file_id
+        data = await state.get_data()
+        if len(data.get("post_text", "")) > 1024:
+            user = await get_user(settings.database_path, message.from_user.id)
+            await message.answer(tr(_language(user), "admin_post_caption_too_long"))
+            return
+    elif message.text and message.text.strip().lower() in {"/skip", "-"}:
+        pass
+    else:
+        user = await get_user(settings.database_path, message.from_user.id)
+        await message.answer(tr(_language(user), "admin_post_photo"))
+        return
+    await state.update_data(post_photo_id=photo_id)
+    await state.set_state(ChannelPostWizard.button)
+    user = await get_user(settings.database_path, message.from_user.id)
+    await message.answer(tr(_language(user), "admin_post_button"))
+
+
+@router.message(ChannelPostWizard.button)
+async def channel_post_button(message: Message, state: FSMContext, settings: Settings) -> None:
+    if message.from_user.id not in settings.admin_ids:
+        await state.clear()
+        return
+    if not message.text or not message.text.strip() or len(message.text.strip()) > 64:
+        user = await get_user(settings.database_path, message.from_user.id)
+        await message.answer(tr(_language(user), "admin_post_button_invalid"))
+        return
+    await state.update_data(post_button_text=message.text.strip())
+    await state.set_state(ChannelPostWizard.confirm)
+    data = await state.get_data()
+    user = await get_user(settings.database_path, message.from_user.id)
+    preview_markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=data["post_button_text"], url="https://t.me/")
+    ]])
+    if data.get("post_photo_id"):
+        await message.answer_photo(
+            photo=data["post_photo_id"], caption=data["post_text"],
+            reply_markup=preview_markup, parse_mode=None
+        )
+    else:
+        await message.answer(data["post_text"], reply_markup=preview_markup, parse_mode=None)
+    await message.answer(
+        tr(_language(user), "admin_post_confirm"),
+        reply_markup=channel_post_confirmation_keyboard(_language(user))
+    )
+
+
+@router.callback_query(F.data == "adm:post:cancel")
+async def channel_post_cancel(
+    callback: CallbackQuery, bot: Bot, settings: Settings, state: FSMContext
+) -> None:
+    allowed, language = await _admin_callback_guard(callback, bot, settings)
+    if not allowed:
+        return
+    await state.clear()
+    await callback.answer()
+    if callback.message:
+        await callback.message.answer(tr(language, "cancelled"))
+
+
+@router.callback_query(F.data == "adm:post:publish")
+async def channel_post_publish(
+    callback: CallbackQuery, bot: Bot, settings: Settings, state: FSMContext
+) -> None:
+    allowed, language = await _admin_callback_guard(callback, bot, settings)
+    if not allowed:
+        return
+    if await state.get_state() != ChannelPostWizard.confirm.state:
+        await callback.answer(tr(language, "admin_post_expired"), show_alert=True)
+        return
+    data = await state.get_data()
+    try:
+        me = await bot.get_me()
+        if not me.username:
+            raise RuntimeError("Bot username is unavailable")
+        button_url = f"https://t.me/{me.username}?start=home"
+        markup = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text=data["post_button_text"], url=button_url)
+        ]])
+        if data.get("post_photo_id"):
+            await bot.send_photo(
+                chat_id=settings.channel_id, photo=data["post_photo_id"],
+                caption=data["post_text"], reply_markup=markup, parse_mode=None
+            )
+        else:
+            await bot.send_message(
+                chat_id=settings.channel_id, text=data["post_text"],
+                reply_markup=markup, parse_mode=None
+            )
+    except (TelegramBadRequest, TelegramForbiddenError, RuntimeError):
+        log.exception("Failed to publish channel post; check channel ID and bot admin rights.")
+        await callback.answer(tr(language, "admin_post_failed"), show_alert=True)
+        return
+    await state.clear()
+    await callback.answer(tr(language, "admin_post_published"))
+    if callback.message:
+        await callback.message.answer(tr(language, "admin_post_published"))
 
 
 @router.callback_query(F.data == "adm:stats")

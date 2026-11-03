@@ -48,6 +48,7 @@ class ContentWizard(StatesGroup):
     version = State()
     url = State()
     file = State()
+    image = State()
 
 
 class BroadcastWizard(StatesGroup):
@@ -338,7 +339,14 @@ async def open_catalog_item(
         text += f"\n\n{body}"
 
     markup = download_keyboard(language, item["url"])
-    await callback.message.answer(text, reply_markup=markup)
+    if item.get("image_file_id"):
+        await callback.message.answer_photo(
+            photo=item["image_file_id"],
+            caption=text,
+            reply_markup=markup,
+        )
+    else:
+        await callback.message.answer(text, reply_markup=markup)
     if item["file_id"]:
         try:
             await callback.message.answer_document(
@@ -584,6 +592,26 @@ async def wizard_file(
         await message.answer(tr(_language(user), "admin_file_prompt"))
         return
 
+    await state.update_data(file_id=file_id, file_name=file_name)
+    await state.set_state(ContentWizard.image)
+    user = await get_user(settings.database_path, message.from_user.id)
+    await message.answer(tr(_language(user), "admin_image"))
+
+
+@router.message(ContentWizard.image)
+async def wizard_image(
+    message: Message, state: FSMContext, settings: Settings
+) -> None:
+    image_file_id = ""
+    if message.photo:
+        image_file_id = message.photo[-1].file_id
+    elif message.text and message.text.strip().lower() in {"/skip", "-"}:
+        pass
+    else:
+        user = await get_user(settings.database_path, message.from_user.id)
+        await message.answer(tr(_language(user), "admin_image_prompt"))
+        return
+
     data = await state.get_data()
     await upsert_content(
         settings.database_path,
@@ -595,8 +623,9 @@ async def wizard_file(
         body_en=data["body_en"],
         version=data.get("version", ""),
         url=data.get("url", ""),
-        file_id=file_id,
-        file_name=file_name,
+        file_id=data.get("file_id", ""),
+        file_name=data.get("file_name", ""),
+        image_file_id=image_file_id,
     )
     await state.clear()
     user = await get_user(settings.database_path, message.from_user.id)

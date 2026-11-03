@@ -365,15 +365,6 @@ async def open_catalog_item(
     if not callback.message:
         return
 
-    # MM2 is served directly from the bot source and does not require
-    # an admin-published SQLite catalog entry.
-    if category == "scripts" and slug == "mm2":
-        await callback.message.answer(
-            f"<pre><code>{html.escape(MM2_LOADSTRING)}</code></pre>",
-            parse_mode="HTML",
-        )
-        return
-
     item = await get_content(settings.database_path, category, slug)
     if not item:
         await callback.message.answer(tr(language, "not_published"))

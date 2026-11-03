@@ -132,6 +132,26 @@ def download_keyboard(language: str, url: str) -> InlineKeyboardMarkup | None:
 
 
 
+def channel_post_style_keyboard(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=tr(language, "admin_post_style_blue"),
+            callback_data="adm:post:style:primary",
+            style="primary",
+        )],
+        [InlineKeyboardButton(
+            text=tr(language, "admin_post_style_green"),
+            callback_data="adm:post:style:success",
+            style="success",
+        )],
+        [InlineKeyboardButton(
+            text=tr(language, "admin_post_style_red"),
+            callback_data="adm:post:style:danger",
+            style="danger",
+        )],
+    ])
+
+
 def channel_post_confirmation_keyboard(language: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(

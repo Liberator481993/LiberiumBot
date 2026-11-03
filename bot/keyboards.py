@@ -67,6 +67,12 @@ def main_keyboard(language: str, is_admin: bool) -> ReplyKeyboardMarkup:
 def catalog_keyboard(category: str, language: str) -> InlineKeyboardMarkup:
     rows = []
     for slug, title in CATALOGS[category]:
+        if category == "injectors" and slug == "arceus_x":
+            title = (
+                "Arceus X — Рекомендуется 🔥"
+                if language == "ru"
+                else "Arceus X — Recommended 🔥"
+            )
         rows.append([InlineKeyboardButton(
             text=title, callback_data=f"item:{category}:{slug}"
         )])

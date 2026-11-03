@@ -25,3 +25,5 @@ jobs:
           pip install -r requirements.txt
       - name: Compile Python files
         run: python -m compileall -q .
+      - name: Import application modules
+        run: python -c "from bot.handlers import router; from bot.keyboards import CATALOGS; print('Loaded handlers and', len(CATALOGS), 'catalogs')"

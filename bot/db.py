@@ -21,7 +21,7 @@ async def init_db(database_path: Path) -> None:
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
                 first_name TEXT,
-                language TEXT NOT NULL DEFAULT 'ru',
+                language TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 last_seen_at TEXT NOT NULL
             )
@@ -62,7 +62,7 @@ async def touch_user(
             INSERT INTO users (
                 user_id, username, first_name, language, created_at, last_seen_at
             )
-            VALUES (?, ?, ?, 'ru', ?, ?)
+            VALUES (?, ?, ?, '', ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 username = excluded.username,
                 first_name = excluded.first_name,

@@ -30,6 +30,7 @@ from bot.keyboards import (
     admin_items_keyboard,
     admin_keyboard,
     catalog_keyboard,
+    channel_post_confirmation_keyboard,
     download_keyboard,
     language_keyboard,
     main_keyboard,
@@ -742,7 +743,7 @@ async def channel_post_photo(message: Message, state: FSMContext, settings: Sett
 
 
 @router.message(ChannelPostWizard.button)
-async def channel_post_button(message: Message, state: FSMContext, settings: Settings) -> None:
+async def channel_post_button(message: Message, bot: Bot, state: FSMContext, settings: Settings) -> None:
     if message.from_user.id not in settings.admin_ids:
         await state.clear()
         return
@@ -754,8 +755,12 @@ async def channel_post_button(message: Message, state: FSMContext, settings: Set
     await state.set_state(ChannelPostWizard.confirm)
     data = await state.get_data()
     user = await get_user(settings.database_path, message.from_user.id)
+    me = await bot.get_me()
     preview_markup = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=data["post_button_text"], url="https://t.me/")
+        InlineKeyboardButton(
+            text=data["post_button_text"],
+            url=f"https://t.me/{me.username}?start=home",
+        )
     ]])
     if data.get("post_photo_id"):
         await message.answer_photo(

@@ -1,0 +1,66 @@
+name: Manual bot test session
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liberium-bot-polling
+  cancel-in-progress: false
+
+jobs:
+  run-bot:
+    # Temporary smoke test only. GitHub-hosted runners are not 24/7 hosting.
+    timeout-minutes: 330
+    runs-on: ubuntu-latest
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+      CHANNEL_ID: "@mm2hubscripts"
+      CHANNEL_URL: "https://t.me/mm2hubscripts"
+      DATABASE_PATH: "data/liberium.sqlite3"
+      LOG_LEVEL: "INFO"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate required secrets without printing them
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+
+          token = os.getenv("BOT_TOKEN", "").strip()
+          raw_ids = os.getenv("ADMIN_IDS", "").strip()
+          if not token:
+              print("::error::Repository secret BOT_TOKEN is missing.")
+              sys.exit(1)
+          if not raw_ids:
+              print("::error::Repository secret ADMIN_IDS is missing.")
+              sys.exit(1)
+          try:
+              ids = [int(value.strip()) for value in raw_ids.split(",") if value.strip()]
+          except ValueError:
+              print("::error::ADMIN_IDS must contain comma-separated numeric Telegram IDs.")
+              sys.exit(1)
+          if not ids:
+              print("::error::ADMIN_IDS does not contain any IDs.")
+              sys.exit(1)
+          print("Required secrets are configured.")
+          PY
+
+      - name: Start temporary polling session
+        run: python main.py

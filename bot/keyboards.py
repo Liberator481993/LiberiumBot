@@ -79,6 +79,9 @@ def catalog_keyboard(category: str, language: str) -> InlineKeyboardMarkup:
 def admin_keyboard(language: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
+            text=tr(language, "admin_menu_channel_post"), callback_data="adm:channel_post"
+        )],
+        [InlineKeyboardButton(
             text=tr(language, "admin_menu_content"), callback_data="adm:content"
         )],
         [InlineKeyboardButton(
@@ -126,3 +129,17 @@ def download_keyboard(language: str, url: str) -> InlineKeyboardMarkup | None:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=tr(language, "download"), url=url)
     ]])
+
+
+
+def channel_post_confirmation_keyboard(language: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=tr(language, "admin_post_publish_button"),
+            callback_data="adm:post:publish",
+        )],
+        [InlineKeyboardButton(
+            text=tr(language, "admin_post_cancel_button"),
+            callback_data="adm:post:cancel",
+        )],
+    ])

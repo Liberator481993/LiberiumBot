@@ -31,6 +31,7 @@ from bot.keyboards import (
     admin_keyboard,
     catalog_keyboard,
     channel_post_confirmation_keyboard,
+    channel_post_style_keyboard,
     download_keyboard,
     language_keyboard,
     main_keyboard,
@@ -60,6 +61,7 @@ class ChannelPostWizard(StatesGroup):
     text = State()
     photo = State()
     button = State()
+    style = State()
     confirm = State()
 
 
@@ -743,7 +745,7 @@ async def channel_post_photo(message: Message, state: FSMContext, settings: Sett
 
 
 @router.message(ChannelPostWizard.button)
-async def channel_post_button(message: Message, bot: Bot, state: FSMContext, settings: Settings) -> None:
+async def channel_post_button(message: Message, state: FSMContext, settings: Settings) -> None:
     if message.from_user.id not in settings.admin_ids:
         await state.clear()
         return
@@ -752,27 +754,59 @@ async def channel_post_button(message: Message, bot: Bot, state: FSMContext, set
         await message.answer(tr(_language(user), "admin_post_button_invalid"))
         return
     await state.update_data(post_button_text=message.text.strip())
+    await state.set_state(ChannelPostWizard.style)
+    user = await get_user(settings.database_path, message.from_user.id)
+    language = _language(user)
+    await message.answer(
+        tr(language, "admin_post_style"),
+        reply_markup=channel_post_style_keyboard(language),
+    )
+
+
+@router.callback_query(F.data.startswith("adm:post:style:"))
+async def channel_post_style(
+    callback: CallbackQuery, bot: Bot, settings: Settings, state: FSMContext
+) -> None:
+    allowed, language = await _admin_callback_guard(callback, bot, settings)
+    if not allowed:
+        return
+    style = callback.data.rsplit(":", 1)[-1]
+    if style not in {"primary", "success", "danger"}:
+        await callback.answer("Unknown button style", show_alert=True)
+        return
+    if await state.get_state() != ChannelPostWizard.style.state:
+        await callback.answer(tr(language, "admin_post_expired"), show_alert=True)
+        return
+
+    await state.update_data(post_button_style=style)
     await state.set_state(ChannelPostWizard.confirm)
     data = await state.get_data()
-    user = await get_user(settings.database_path, message.from_user.id)
     me = await bot.get_me()
+    if not me.username:
+        await callback.answer(tr(language, "admin_post_failed"), show_alert=True)
+        return
     preview_markup = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(
             text=data["post_button_text"],
             url=f"https://t.me/{me.username}?start=home",
+            style=style,
         )
     ]])
-    if data.get("post_photo_id"):
-        await message.answer_photo(
-            photo=data["post_photo_id"], caption=data["post_text"],
-            reply_markup=preview_markup, parse_mode=None
+    await callback.answer()
+    if callback.message:
+        if data.get("post_photo_id"):
+            await callback.message.answer_photo(
+                photo=data["post_photo_id"], caption=data["post_text"],
+                reply_markup=preview_markup, parse_mode=None
+            )
+        else:
+            await callback.message.answer(
+                data["post_text"], reply_markup=preview_markup, parse_mode=None
+            )
+        await callback.message.answer(
+            tr(language, "admin_post_confirm"),
+            reply_markup=channel_post_confirmation_keyboard(language),
         )
-    else:
-        await message.answer(data["post_text"], reply_markup=preview_markup, parse_mode=None)
-    await message.answer(
-        tr(_language(user), "admin_post_confirm"),
-        reply_markup=channel_post_confirmation_keyboard(_language(user))
-    )
 
 
 @router.callback_query(F.data == "adm:post:cancel")
@@ -805,7 +839,11 @@ async def channel_post_publish(
             raise RuntimeError("Bot username is unavailable")
         button_url = f"https://t.me/{me.username}?start=home"
         markup = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text=data["post_button_text"], url=button_url)
+            InlineKeyboardButton(
+                text=data["post_button_text"],
+                url=button_url,
+                style=data.get("post_button_style", "primary"),
+            )
         ]])
         if data.get("post_photo_id"):
             await bot.send_photo(

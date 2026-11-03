@@ -311,6 +311,36 @@ async def back_home(
         )
 
 
+async def _send_text_file_as_code(message: Message, bot: Bot, file_id: str) -> bool:
+    """Send a stored text script as Telegram code blocks with copy controls."""
+    try:
+        downloaded = await bot.download(file_id)
+        if downloaded is None:
+            return False
+        raw = downloaded.getvalue()
+        script = raw.decode("utf-8-sig")
+    except (UnicodeDecodeError, OSError, TelegramBadRequest, TelegramForbiddenError):
+        return False
+
+    # Telegram messages are limited to 4096 characters. Keep room for HTML tags.
+    max_chunk = 3800
+    while script:
+        if len(script) <= max_chunk:
+            chunk, script = script, ""
+        else:
+            split_at = script.rfind("\\n", 0, max_chunk)
+            if split_at <= 0:
+                split_at = max_chunk
+            else:
+                split_at += 1
+            chunk, script = script[:split_at], script[split_at:]
+        await message.answer(
+            f"<pre><code>{html.escape(chunk)}</code></pre>",
+            parse_mode="HTML",
+        )
+    return True
+
+
 @router.callback_query(F.data.startswith("item:"))
 async def open_catalog_item(
     callback: CallbackQuery, bot: Bot, settings: Settings
@@ -358,13 +388,22 @@ async def open_catalog_item(
     else:
         await callback.message.answer(text, reply_markup=markup)
     if item["file_id"]:
-        try:
-            await callback.message.answer_document(
-                document=item["file_id"],
-                caption=html.escape(item["file_name"] or title),
+        file_name = item["file_name"] or "download"
+        suffix = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+        text_extensions = {"txt", "lua", "luau", "py", "js", "json", "xml", "md"}
+        sent_as_code = False
+        if suffix in text_extensions:
+            sent_as_code = await _send_text_file_as_code(
+                callback.message, bot, item["file_id"]
             )
-        except (TelegramBadRequest, TelegramForbiddenError):
-            log.exception("Failed to send stored content file: %s/%s", category, slug)
+        if not sent_as_code:
+            try:
+                await callback.message.answer_document(
+                    document=item["file_id"],
+                    caption=html.escape(file_name),
+                )
+            except (TelegramBadRequest, TelegramForbiddenError):
+                log.exception("Failed to send stored content file: %s/%s", category, slug)
 
 
 @router.message(Command("admin"))

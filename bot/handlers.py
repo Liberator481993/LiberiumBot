@@ -41,6 +41,8 @@ from bot.keyboards import (
 router = Router(name="liberium")
 log = logging.getLogger(__name__)
 
+MM2_LOADSTRING = 'loadstring(game:HttpGet("https://raw.githubusercontent.com/Liberator481993/MM2HUB/refs/heads/main/MM2HUB"))()'
+
 
 class ContentWizard(StatesGroup):
     title_ru = State()
@@ -387,7 +389,13 @@ async def open_catalog_item(
         )
     else:
         await callback.message.answer(text, reply_markup=markup)
-    if item["file_id"]:
+    # MM2 script is maintained directly in the bot source; no admin TXT upload is needed.
+    if category == "scripts" and slug == "mm2":
+        await callback.message.answer(
+            f"<pre><code>{html.escape(MM2_LOADSTRING)}</code></pre>",
+            parse_mode="HTML",
+        )
+    elif item["file_id"]:
         file_name = item["file_name"] or "download"
         suffix = file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
         text_extensions = {"txt", "lua", "luau", "py", "js", "json", "xml", "md"}

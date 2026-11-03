@@ -361,10 +361,23 @@ async def open_catalog_item(
         await callback.answer("Unknown item", show_alert=True)
         return
 
-    item = await get_content(settings.database_path, category, slug)
     await callback.answer()
     if not callback.message:
         return
+
+    # MM2 is served directly from the bot source and does not require
+    # an admin-published SQLite catalog entry.
+    if category == "scripts" and slug == "mm2":
+        title = "Murder Mystery 2" if language == "en" else "Murder Mystery 2"
+        await callback.message.answer(
+            f"<b>{title}</b>\\n\\n"
+            + ("Tap the code to copy the script:" if language == "en" else "Нажми на код, чтобы скопировать скрипт:")
+            + f"\\n\\n<pre><code>{html.escape(MM2_LOADSTRING)}</code></pre>",
+            parse_mode="HTML",
+        )
+        return
+
+    item = await get_content(settings.database_path, category, slug)
     if not item:
         await callback.message.answer(tr(language, "not_published"))
         return

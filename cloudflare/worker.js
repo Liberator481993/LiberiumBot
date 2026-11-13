@@ -34,6 +34,9 @@ async function tg(env, method, body) {
 async function send(env, chat_id, text, extra={}) {
   return tg(env,"sendMessage",{chat_id,text,parse_mode:"HTML",...extra});
 }
+async function copyBroadcast(env, sourceChat, sourceMessage, targetChat) {
+  return tg(env,"copyMessage",{chat_id:targetChat,from_chat_id:sourceChat,message_id:sourceMessage});
+}
 async function user(env,id,from={}) {
   await env.DB.prepare("INSERT INTO users(user_id,username,first_name,language,created_at,last_seen_at) VALUES(?,?,?,'',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,first_name=excluded.first_name,last_seen_at=CURRENT_TIMESTAMP")
     .bind(id,from.username||"",from.first_name||"").run();
@@ -75,14 +78,57 @@ async function handleMessage(env,m) {
     return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")],[btn(tr(lang,"back"),"nav:home")]])});
   }
   const st=await state(env,id);
-  if(st && admins(env).has(String(id)) && text) {
+  if(st && admins(env).has(String(id)) && (text || m.document || m.photo)) {
     let d={}; try{d=JSON.parse(st.data||"{}")}catch{}
     const step=st.step;
     const prompts={title_ru:"title_en",title_en:"body_ru",body_ru:"body_en",body_en:"version",version:"url",url:"file"};
     if(step==="broadcast") {
       const users=await env.DB.prepare("SELECT user_id FROM users").all(); let sent=0,failed=0;
-      for(const row of users.results||[]) { const r=await send(env,row.user_id,esc(text)); if(r.ok)sent++;else failed++; }
+      for(const row of users.results||[]) {
+        const r=await copyBroadcast(env,chat,m.message_id,row.user_id);
+        if(r.ok) sent++; else failed++;
+        if(r.error_code===429) await new Promise(resolve=>setTimeout(resolve,Math.max(1000,(r.parameters?.retry_after||1)*1000)));
+        else await new Promise(resolve=>setTimeout(resolve,40));
+      }
       await clearState(env,id); return send(env,chat,tr(lang,"broadcast_done").replace("{sent}",sent).replace("{failed}",failed));
+    }
+    if(step==="file") {
+      if(m.document) { d.file_id=m.document.file_id; d.file_name=m.document.file_name||"download"; }
+      else if(text==="/skip"||text==="-") { d.file_id=""; d.file_name=""; }
+      else return send(env,chat,lang==="ru"?"Отправь документ или /skip.":"Send a document or /skip.");
+      await setState(env,id,"image",d);
+      return send(env,chat,lang==="ru"?"Теперь отправь изображение как фото или /skip.":"Now send an image as a photo or /skip.");
+    }
+    if(step==="image") {
+      if(m.photo?.length) d.image_file_id=m.photo[m.photo.length-1].file_id;
+      else if(text==="/skip"||text==="-") d.image_file_id="";
+      else return send(env,chat,lang==="ru"?"Отправь фото или /skip.":"Send a photo or /skip.");
+      await env.DB.prepare("INSERT INTO content_items(category,slug,title_ru,title_en,body_ru,body_en,version,url,file_id,file_name,image_file_id,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(category,slug) DO UPDATE SET title_ru=excluded.title_ru,title_en=excluded.title_en,body_ru=excluded.body_ru,body_en=excluded.body_en,version=excluded.version,url=excluded.url,file_id=excluded.file_id,file_name=excluded.file_name,image_file_id=excluded.image_file_id,updated_at=CURRENT_TIMESTAMP")
+        .bind(d.category,d.slug,d.title_ru,d.title_en,d.body_ru,d.body_en,d.version==="-"?"":d.version,d.url==="-"?"":d.url,d.file_id||"",d.file_name||"",d.image_file_id||"").run();
+      await clearState(env,id); return send(env,chat,tr(lang,"saved"));
+    }
+    if(step==="post_text") {
+      if(!text.trim()) return send(env,chat,lang==="ru"?"Отправь текст поста.":"Send the post text.");
+      d.post_text=text.trim(); await setState(env,id,"post_photo",d);
+      return send(env,chat,lang==="ru"?"Отправь фото или /skip.":"Send a photo or /skip.");
+    }
+    if(step==="post_photo") {
+      if(m.photo?.length) d.post_photo_id=m.photo[m.photo.length-1].file_id;
+      else if(text==="/skip"||text==="-") d.post_photo_id="";
+      else return send(env,chat,lang==="ru"?"Отправь фото или /skip.":"Send a photo or /skip.");
+      if(d.post_photo_id && d.post_text.length>1024) return send(env,chat,lang==="ru"?"Подпись к фото не должна превышать 1024 символа.":"Photo caption must not exceed 1024 characters.");
+      await setState(env,id,"post_button",d);
+      return send(env,chat,lang==="ru"?"Напиши текст кнопки (до 64 символов):":"Send the button label (up to 64 characters).");
+    }
+    if(step==="post_button") {
+      if(!text.trim()||text.trim().length>64) return send(env,chat,lang==="ru"?"Текст кнопки должен быть от 1 до 64 символов.":"Button label must be 1–64 characters.");
+      d.post_button=text.trim(); await setState(env,id,"post_confirm",d);
+      const me=await tg(env,"getMe",{});
+      if(!me.ok||!me.result.username) { await clearState(env,id); return send(env,chat,tr(lang,"invalid")); }
+      const markup=kb([[{text:d.post_button,url:"https://t.me/"+me.result.username+"?start=home"}]]);
+      if(d.post_photo_id) await tg(env,"sendPhoto",{chat_id:chat,photo:d.post_photo_id,caption:d.post_text,reply_markup:markup});
+      else await send(env,chat,esc(d.post_text),{reply_markup:markup});
+      return send(env,chat,lang==="ru"?"Предпросмотр готов. Нажми «Опубликовать» или /cancel.":"Preview ready. Press Publish or /cancel.",{reply_markup:kb([[btn(lang==="ru"?"🚀 Опубликовать":"🚀 Publish","adm:post:publish")],[btn(lang==="ru"?"✖️ Отмена":"✖️ Cancel","adm:post:cancel")]])});
     }
     if(step==="title_ru"||step==="title_en"||step==="body_ru"||step==="body_en"||step==="version"||step==="url"||step==="file") {
       const key=step; d[key]=text==="/"?"":text;
@@ -130,15 +176,35 @@ async function handleCallback(env,c) {
     if(item.version)text+=`\n${tr(lang,"version")}: <code>${esc(item.version)}</code>`;
     const body=lang==="ru"?item.body_ru:item.body_en;if(body)text+=`\n\n${esc(body)}`;
     const extra={}; if(item.url)extra.reply_markup=kb([[{text:tr(lang,"download"),url:item.url}]]);
-    await send(env,chat,text,extra);
+    if(item.image_file_id) {
+      const photo=await tg(env,"sendPhoto",{chat_id:chat,photo:item.image_file_id,caption:text.length<=1024?text:text.slice(0,1000),parse_mode:"HTML",...extra});
+      if(!photo.ok) await send(env,chat,text,extra);
+    } else await send(env,chat,text,extra);
     if(cat==="scripts"&&slug==="mm2") await send(env,chat,'<pre><code>loadstring(game:HttpGet("https://raw.githubusercontent.com/Liberator481993/MM2HUB/refs/heads/main/MM2HUB"))()</code></pre>');
-    if(item.file_id) await send(env,chat,lang==="ru"?"Файл сохранён в карточке. Для выдачи файла используйте Telegram file_id после завершения настройки медиа-модуля.":"File metadata is saved. File delivery is enabled in the media module stage.");
+    else if(item.file_id) {
+      const file=await tg(env,"sendDocument",{chat_id:chat,document:item.file_id,caption:item.file_name||undefined});
+      if(!file.ok) console.error("Document delivery failed",file.description);
+    }
     return;
   }
   if(data==="profile")return send(env,chat,`👤 <b>Profile</b>\nID: <code>${id}</code>\nLanguage: ${lang}`);
   if(!admins(env).has(String(id))) return send(env,chat,tr(lang,"denied"));
-  if(data==="adm:home")return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")],[btn(tr(lang,"back"),"nav:home")]])});
+  if(data==="adm:home")return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(lang==="ru"?"📢 Создать пост в канал":"📢 Create channel post","adm:channel_post")],[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")],[btn(tr(lang,"back"),"nav:home")]])});
   if(data==="adm:content")return send(env,chat,tr(lang,"cat"),{reply_markup:kb([["scripts","injectors","guides"].map(x=>btn(tr(lang,x),`adm:cat:${x}`)),[btn(tr(lang,"back"),"adm:home")]])});
+  if(data==="adm:channel_post"){await setState(env,id,"post_text",{});return send(env,chat,lang==="ru"?"Отправь текст поста для канала:":"Send the channel post text:");}
+  if(data==="adm:post:cancel"){await clearState(env,id);return send(env,chat,lang==="ru"?"Публикация отменена.":"Post cancelled.");}
+  if(data==="adm:post:publish"){
+    const st=await state(env,id); let d={};try{d=JSON.parse(st?.data||"{}")}catch{}
+    if(st?.step!=="post_confirm")return send(env,chat,lang==="ru"?"Черновик не найден.":"Draft not found.");
+    const me=await tg(env,"getMe",{});
+    if(!me.ok||!me.result.username)return send(env,chat,tr(lang,"invalid"));
+    const markup=kb([[{text:d.post_button,url:"https://t.me/"+me.result.username+"?start=home"}]]);
+    const r=d.post_photo_id
+      ? await tg(env,"sendPhoto",{chat_id:env.CHANNEL_ID||"@mm2hubscripts",photo:d.post_photo_id,caption:d.post_text,reply_markup:markup})
+      : await send(env,env.CHANNEL_ID||"@mm2hubscripts",esc(d.post_text),{reply_markup:markup});
+    if(!r.ok)return send(env,chat,lang==="ru"?"Не удалось опубликовать. Проверь права бота в канале.":"Publish failed. Check the bot's channel permissions.");
+    await clearState(env,id);return send(env,chat,lang==="ru"?"✅ Пост опубликован в канале.":"✅ Channel post published.");
+  }
   if(data.startsWith("adm:cat:")) {const cat=data.split(":")[2]; if(!CATALOGS[cat])return; const rows=CATALOGS[cat].map(([slug,title])=>[btn(title,`adm:edit:${cat}:${slug}`),btn(tr(lang,"del"),`adm:del:${cat}:${slug}`)]);rows.push([btn(tr(lang,"back"),"adm:content")]);return send(env,chat,tr(lang,"item"),{reply_markup:kb(rows)});}
   if(data.startsWith("adm:edit:")) {const [, ,cat,slug]=data.split(":");if(!CATALOGS[cat]?.some(x=>x[0]===slug))return;await setState(env,id,"title_ru",{category:cat,slug});return send(env,chat,tr(lang,"title_ru"));}
   if(data.startsWith("adm:del:")) {const [, ,cat,slug]=data.split(":");await env.DB.prepare("DELETE FROM content_items WHERE category=? AND slug=?").bind(cat,slug).run();return send(env,chat,tr(lang,"deleted"));}

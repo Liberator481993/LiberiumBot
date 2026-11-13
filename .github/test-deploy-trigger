@@ -1,0 +1,1 @@
+One-time trigger for the isolated LiberiumBot TEST Worker deployment. This file is the only path watched by the test deployment workflow.

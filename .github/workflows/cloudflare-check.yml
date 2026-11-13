@@ -1,6 +1,7 @@
 name: Cloudflare Worker validation
 
 on:
+  workflow_dispatch:
   push:
     branches: [cloudflare-worker-port]
   pull_request:

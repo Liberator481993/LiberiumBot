@@ -17,9 +17,35 @@ This is a separate migration branch. The original Python/aiogram polling bot rem
 - Broadcast copies the original Telegram message, preserving supported media, and applies a basic delay / 429 retry wait.
 - Basic content management and statistics.
 
+## SQLite → D1 data migration
+
+The repository includes an offline, read-only exporter at `cloudflare/export_sqlite_to_d1.py`. It exports the existing `users` and `content_items` tables, including language preferences and Telegram file/photo IDs. The generated SQL uses UPSERTs, so importing it more than once does not duplicate users or catalog entries. Existing wizard state is intentionally not migrated because it is temporary in-progress interaction state.
+
+**The source SQLite file is not included in GitHub and this exporter does not access the bot host automatically.** Run the exporter on a machine that has a copy of the actual production SQLite file:
+
+```bash
+python cloudflare/export_sqlite_to_d1.py --sqlite data/liberium.sqlite3 --output data/cloudflare-migration.sql
+```
+
+The source is opened in SQLite read-only mode. The output file contains Telegram user IDs and may contain Telegram `file_id` values; keep it private, do not commit it, and do not send it in chat.
+
+After creating the D1 database, applying the schema, and configuring its ID in `wrangler.toml`, import the SQL from the same trusted machine:
+
+```bash
+npx wrangler d1 execute liberiumbot --remote --file=data/cloudflare-migration.sql
+```
+
+Then compare the printed exporter counts with the D1 counts:
+
+```bash
+npx wrangler d1 execute liberiumbot --remote --command="SELECT 'users' AS table_name, COUNT(*) AS row_count FROM users UNION ALL SELECT 'content_items', COUNT(*) FROM content_items;"
+```
+
+The import is additive/upserting; it does not delete D1 rows that are absent from the SQLite source. Back up the D1 database before importing into a database that already contains production data. Do not run the import until you have confirmed that the SQLite file is the latest complete bot database.
+
 ## Known gaps before production
-- No migration utility yet for importing existing SQLite users/content into D1.
-- No live Telegram integration test; CI currently performs JavaScript syntax validation and static smoke tests.
+- The migration utility is implemented and unit-tested, but it has **not** been run against the real production SQLite database or a real D1 database yet. Counts have not been verified.
+- No live Telegram integration test; CI performs JavaScript syntax validation and offline migration smoke tests.
 - Broadcast retry handling is basic; failed recipients are counted but not persisted for a retry campaign.
 - Channel button colour selection is not exposed in this Worker port; Telegram Bot API button styling compatibility needs separate verification.
 - The existing SQLite database is not automatically synchronized with D1.
@@ -34,4 +60,4 @@ This is a separate migration branch. The original Python/aiogram polling bot rem
 6. Set Telegram webhook to `https://<worker-host>/telegram/webhook` with the same secret token. Do this only after the Worker is deployed and verified.
 7. Disable the old polling process before setting the webhook. Telegram does not allow polling and webhook delivery at the same time for one bot token.
 
-Do not deploy until D1 is created, its ID is configured, secrets are set, SQLite data migration is implemented and verified, and the production parity checklist is complete.
+Do not deploy until D1 is created, its ID is configured, secrets are set, SQLite data migration has been run and verified, and the production parity checklist is complete.

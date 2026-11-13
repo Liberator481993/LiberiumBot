@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_deploy:
-        description: "Set to yes only after D1 has been created, SQLite data imported and verified, and Worker secrets configured."
+        description: "Set to yes only after D1 is initialized, the chosen clean-start/data-migration path is verified, and Worker secrets are configured."
         required: true
         type: choice
         options:
@@ -33,12 +33,16 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
           D1_MIGRATION_VERIFIED: ${{ vars.D1_MIGRATION_VERIFIED }}
+          D1_CLEAN_START_VERIFIED: ${{ vars.D1_CLEAN_START_VERIFIED }}
         run: |
           set -euo pipefail
           test -n "$CF_ACCOUNT_ID" || { echo "::error::Set repository variable CLOUDFLARE_ACCOUNT_ID."; exit 1; }
           test -n "$CF_API_TOKEN" || { echo "::error::Set repository secret CLOUDFLARE_API_TOKEN."; exit 1; }
           test -n "$D1_DATABASE_ID" || { echo "::error::Set repository variable D1_DATABASE_ID."; exit 1; }
-          test "$D1_MIGRATION_VERIFIED" = "true" || { echo "::error::Set D1_MIGRATION_VERIFIED=true only after importing and checking the real SQLite data."; exit 1; }
+          if [ "$D1_MIGRATION_VERIFIED" != "true" ] && [ "$D1_CLEAN_START_VERIFIED" != "true" ]; then
+            echo "::error::Set D1_MIGRATION_VERIFIED=true after importing and checking real data, or D1_CLEAN_START_VERIFIED=true after confirming the intentionally empty clean-start database."
+            exit 1
+          fi
           if grep -q "REPLACE_WITH_D1_DATABASE_ID" wrangler.toml; then
             sed -i "s/REPLACE_WITH_D1_DATABASE_ID/$D1_DATABASE_ID/" wrangler.toml
           fi
@@ -57,6 +61,7 @@ jobs:
         run: |
           node --check cloudflare/worker.js
           node --test cloudflare/worker.test.mjs
+          python -m unittest cloudflare.test_schema cloudflare.test_export_sqlite_to_d1 -v
 
       - name: Apply idempotent D1 schema
         env:

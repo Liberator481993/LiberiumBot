@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: liberium-bot-polling
@@ -37,6 +38,36 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Restore latest successful SQLite artifact
+        id: restore-db
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          previous_run_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/manual-bot-test.yml/runs?status=success&per_page=30" --jq '.workflow_runs | map(select(.id != (env.GITHUB_RUN_ID | tonumber))) | .[0].id // empty')"
+          if [ -z "$previous_run_id" ]; then
+            echo "No previous successful bot session found; starting with an empty local database."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          artifact_id="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$previous_run_id/artifacts" --jq '.artifacts[] | select(.name == "liberium-sqlite-db" and .expired == false) | .id' | head -n 1)"
+          if [ -z "$artifact_id" ]; then
+            echo "The previous successful run has no unexpired database artifact."
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p data/restore
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$RUNNER_TEMP/liberium-db.zip"
+          python -m zipfile -e "$RUNNER_TEMP/liberium-db.zip" data/restore
+          if [ ! -s data/restore/liberium.sqlite3 ]; then
+            echo "::error::Restored artifact does not contain a valid database file."
+            exit 1
+          fi
+          mkdir -p data
+          cp data/restore/liberium.sqlite3 data/liberium.sqlite3
+          echo "found=true" >> "$GITHUB_OUTPUT"
+          echo "Restored SQLite database from the latest successful session."
+
       - name: Validate required secrets without printing them
         run: |
           python - <<'PY'
@@ -64,3 +95,23 @@ jobs:
 
       - name: Start temporary polling session
         run: python main.py
+
+      - name: Create consistent SQLite snapshot
+        if: always()
+        run: |
+          if [ -f data/liberium.sqlite3 ]; then
+            python scripts/backup_sqlite.py --source data/liberium.sqlite3 --destination "$RUNNER_TEMP/liberium.sqlite3"
+            mkdir -p data/artifact
+            cp "$RUNNER_TEMP/liberium.sqlite3" data/artifact/liberium.sqlite3
+          else
+            echo "No SQLite database exists; skipping artifact creation."
+          fi
+
+      - name: Save SQLite database artifact
+        if: always() && hashFiles('data/artifact/liberium.sqlite3') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: liberium-sqlite-db
+          path: data/artifact/liberium.sqlite3
+          if-no-files-found: error
+          retention-days: 30

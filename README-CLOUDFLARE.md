@@ -17,7 +17,20 @@ This is a separate migration branch. The original Python/aiogram polling bot rem
 - Broadcast copies the original Telegram message, preserving supported media, and applies a basic delay / 429 retry wait.
 - Basic content management and statistics.
 
-## SQLite → D1 data migration
+## Current clean-start decision
+
+The previous bot ran only in temporary GitHub Actions sessions. Those runs have no saved workflow artifacts containing the SQLite database, so the old user list and content records cannot be imported from GitHub Actions.
+
+The owner has approved continuing with a **new, empty D1 database**. This means:
+- users will be added again when they start the new bot;
+- language preferences and old user statistics will not carry over;
+- catalog items, files, images and published-content records must be re-entered through the admin panel;
+- the original Python bot on `main` remains untouched until the new Worker is tested and a production switch is explicitly approved.
+
+The D1 database `liberiumbot` has already been created in Cloudflare, and its ID is configured in this migration branch's `wrangler.toml`. The schema has not yet been confirmed applied to the remote database.
+
+## SQLite → D1 data migration (optional recovery path)
+
 
 The repository includes an offline, read-only exporter at `cloudflare/export_sqlite_to_d1.py`. It exports the existing `users` and `content_items` tables, including language preferences and Telegram file/photo IDs. The generated SQL uses UPSERTs, so importing it more than once does not duplicate users or catalog entries. Existing wizard state is intentionally not migrated because it is temporary in-progress interaction state.
 
@@ -53,7 +66,7 @@ Before first deployment:
 1. Create a D1 database named `liberiumbot` in the same Cloudflare account used for the Worker.
 2. Apply `cloudflare/schema.sql` to that database. The schema includes a Telegram update ledger to
    reduce duplicate processing when Telegram retries webhook deliveries.
-3. Copy the D1 database ID into `wrangler.toml` (replace the placeholder).
+3. Confirm the D1 database ID in `wrangler.toml` matches the database created in Cloudflare. It is already configured for the current account.
 4. Configure Worker secrets `BOT_TOKEN`, `ADMIN_IDS`, and a strong random `WEBHOOK_SECRET`.
    The webhook refuses requests if any required secret or the D1 binding is missing.
 5. In Cloudflare Dashboard → Workers & Pages → liberiumbot → Settings → Variables and Secrets,
@@ -62,10 +75,10 @@ Before first deployment:
 6. In GitHub repository Settings → Secrets and variables → Actions, add:
    - Secret `CLOUDFLARE_API_TOKEN` (Cloudflare API token with the minimum required Workers and D1 permissions).
    - Variables `CLOUDFLARE_ACCOUNT_ID` and `D1_DATABASE_ID`.
-   - Variable `D1_MIGRATION_VERIFIED=true` only after the actual SQLite export has been imported and row counts verified.
+   - For a restored database, set `D1_MIGRATION_VERIFIED=true` only after importing the real SQLite export and verifying row counts.
+   - For the approved empty start, set `D1_CLEAN_START_VERIFIED=true` only after applying the schema and confirming the expected empty tables/counts.
 7. The manual workflow `.github/workflows/cloudflare-deploy.yml` is gated: its default is `no`.
-   It will refuse to deploy unless the Cloudflare credentials, D1 ID and migration-verification
-   variable are present. Select `yes` only after completing all prerequisites.
+   It accepts either verified data migration or verified clean start, but still requires Cloudflare credentials, the D1 ID and Worker secrets. Selecting `yes` is a separate deployment approval and must not be done until all prerequisites are complete.
 8. After deployment, test `GET /healthz` and the webhook using a non-production test bot if possible.
    Only after verification, set Telegram's webhook with the same secret token. Never run polling
    and webhook delivery simultaneously for the same bot token.
@@ -84,14 +97,14 @@ These limits may be enough for a small bot, but they are not an uptime guarantee
 and consider Workers Paid if real traffic exceeds the free quotas.
 
 ## Known gaps before production
-- The migration utility is implemented and unit-tested, but it has **not** been run against the real production SQLite database or a real D1 database yet. Counts have not been verified.
+- The schema and offline migration utility have automated tests. The schema has **not yet** been applied to the live D1 database, and no live database row counts have been checked.
 - No live Telegram integration test; CI performs JavaScript syntax validation and offline migration smoke tests.
 - Broadcast retry handling is basic; failed recipients are counted but not persisted for a retry campaign.
 - Channel button colour selection is not exposed in this Worker port; Telegram Bot API button styling compatibility needs separate verification.
 - The existing SQLite database is not automatically synchronized with D1.
-- D1 database ID is still a placeholder in `wrangler.toml`.
+- The D1 database ID is configured in `wrangler.toml`; remote schema initialization and live verification are still pending.
 
-## Cloudflare setup (do not run until the migration is approved)
+## Cloudflare setup (do not deploy until the clean-start or migration checks are complete)
 1. Create a D1 database named `liberiumbot`.
 2. Apply `cloudflare/schema.sql` using `npx wrangler d1 execute liberiumbot --remote --file=cloudflare/schema.sql`.
 3. Put the D1 database ID into `wrangler.toml`.
@@ -100,4 +113,4 @@ and consider Workers Paid if real traffic exceeds the free quotas.
 6. Set Telegram webhook to `https://<worker-host>/telegram/webhook` with the same secret token. Do this only after the Worker is deployed and verified.
 7. Disable the old polling process before setting the webhook. Telegram does not allow polling and webhook delivery at the same time for one bot token.
 
-Do not deploy until D1 is created, its ID is configured, Worker secrets are set, SQLite data migration has been run and verified, and the production parity checklist is complete. The deployment workflow does not create a D1 database, recover a missing SQLite file, import user data, or set Telegram's webhook.
+Do not deploy until D1 is created, its ID is configured, Worker secrets are set, and either the SQLite import or the intentionally empty clean-start schema/counts have been verified. The deployment workflow does not recover a missing SQLite file, import user data, or set Telegram's webhook.

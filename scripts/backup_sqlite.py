@@ -8,28 +8,19 @@ import sys
 from pathlib import Path
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, default=Path("data/liberium.sqlite3"))
-    parser.add_argument("--destination", type=Path, required=True)
-    args = parser.parse_args()
+def create_snapshot(source_path: Path, destination_path: Path) -> dict[str, int]:
+    if not source_path.is_file():
+        raise FileNotFoundError(f"SQLite source does not exist: {source_path}")
+    if source_path.resolve() == destination_path.resolve():
+        raise ValueError("Snapshot destination must differ from source.")
 
-    if not args.source.is_file():
-        print(f"SQLite source does not exist: {args.source}", file=sys.stderr)
-        return 2
-    if args.source.resolve() == args.destination.resolve():
-        print("Snapshot destination must differ from source.", file=sys.stderr)
-        return 2
-
-    args.destination.parent.mkdir(parents=True, exist_ok=True)
-    if args.destination.exists():
-        args.destination.unlink()
-
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    destination_path.unlink(missing_ok=True)
     try:
         # SQLite's backup API includes committed WAL content and produces a
         # standalone database file, unlike copying the live .sqlite3 file.
-        with sqlite3.connect(f"file:{args.source.resolve()}?mode=ro", uri=True) as source:
-            with sqlite3.connect(args.destination) as target:
+        with sqlite3.connect(f"file:{source_path.resolve()}?mode=ro", uri=True) as source:
+            with sqlite3.connect(destination_path) as target:
                 source.backup(target)
                 result = target.execute("PRAGMA integrity_check").fetchone()
                 if not result or result[0] != "ok":
@@ -44,8 +35,20 @@ def main() -> int:
                         int(target.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0])
                         if exists else 0
                     )
-    except (OSError, sqlite3.Error) as exc:
-        args.destination.unlink(missing_ok=True)
+        return counts
+    except Exception:
+        destination_path.unlink(missing_ok=True)
+        raise
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, default=Path("data/liberium.sqlite3"))
+    parser.add_argument("--destination", type=Path, required=True)
+    args = parser.parse_args()
+    try:
+        counts = create_snapshot(args.source, args.destination)
+    except (OSError, sqlite3.Error, ValueError) as exc:
         print(f"SQLite snapshot failed: {exc}", file=sys.stderr)
         return 1
 

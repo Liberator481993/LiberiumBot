@@ -73,7 +73,8 @@ async function handleMessage(env,m) {
   }
   if(text==="/help") return send(env,chat,tr(lang,"support"));
   if(text==="/cancel") { await clearState(env,id); return send(env,chat,lang==="ru"?"Действие отменено.":"Action cancelled."); }
-  if(text==="/admin" && admins(env).has(String(id))) {
+  if(text==="/admin") {
+    if(!admins(env).has(String(id))) return send(env,chat,tr(lang,"denied"));
     if(!(await access(env,chat,id,lang))) return;
     return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(lang==="ru"?"📢 Создать пост в канал":"📢 Create channel post","adm:channel_post")],[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")],[btn(tr(lang,"back"),"nav:home")]])});
   }

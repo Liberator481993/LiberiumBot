@@ -146,7 +146,7 @@ async function handleMessage(env,m) {
   if(action==="scripts"||action==="injectors"||action==="guides") return send(env,chat,tr(lang,"choose_item"),{reply_markup:catalogMarkup(action,lang)});
   if(action==="profile") return send(env,chat,`👤 <b>${lang==="ru"?"Твой профиль":"Your profile"}</b>\nID: <code>${id}</code>\nLanguage: ${lang}`);
   if(action==="language") return send(env,chat,tr(lang,"choose_language"),{reply_markup:kb([[btn("🇷🇺 Русский","lang:ru"),btn("🇬🇧 English","lang:en")]])});
-  if(action==="admin"&&admins(env).has(String(id))) return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")]])});
+  if(action==="admin"&&admins(env).has(String(id))) return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(lang==="ru"?"📢 Создать пост в канал":"📢 Create channel post","adm:channel_post")],[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")]])});
   return send(env,chat,tr(lang,"choose"));
 }
 function catalogMarkup(category,lang) {

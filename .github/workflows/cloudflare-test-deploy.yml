@@ -1,16 +1,11 @@
 name: Deploy LiberiumBot TEST Worker
 
 on:
-  workflow_dispatch:
-    inputs:
-      confirm_test_deploy:
-        description: "Set to yes only when TEST_BOT_TOKEN, TEST_ADMIN_IDS and TEST_WEBHOOK_SECRET are configured."
-        required: true
-        type: choice
-        options:
-          - no
-          - yes
-        default: no
+  push:
+    branches:
+      - cloudflare-worker-port
+    paths:
+      - ".github/test-deploy-trigger"
 
 permissions:
   contents: read
@@ -21,7 +16,7 @@ concurrency:
 
 jobs:
   deploy-test:
-    if: ${{ inputs.confirm_test_deploy == 'yes' && github.ref == 'refs/heads/cloudflare-worker-port' }}
+    if: ${{ github.ref == 'refs/heads/cloudflare-worker-port' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out migration branch

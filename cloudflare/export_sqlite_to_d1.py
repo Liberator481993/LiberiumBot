@@ -84,6 +84,12 @@ def export_sqlite(source: Path) -> tuple[str, dict[str, int]]:
             db, "content_items", CONTENT_COLUMNS, optional=("image_file_id",)
         )
 
+    # The old SQLite schema allows nullable usernames; D1 intentionally normalizes
+    # these display-only fields to empty strings.
+    for row in users:
+        row["username"] = row.get("username") or ""
+        row["first_name"] = row.get("first_name") or ""
+
     lines = [
         "-- LiberiumBot SQLite -> Cloudflare D1 data export",
         "-- Generated offline. Safe to re-run: rows are upserted by primary/unique key.",

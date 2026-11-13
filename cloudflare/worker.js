@@ -211,15 +211,68 @@ async function handleCallback(env,c) {
   if(data==="adm:broadcast"){await setState(env,id,"broadcast");return send(env,chat,tr(lang,"broadcast_q"));}
   if(data==="adm:stats"){const a=await env.DB.prepare("SELECT COUNT(*) n FROM users").first(),b=await env.DB.prepare("SELECT COUNT(*) n FROM content_items").first();return send(env,chat,tr(lang,"stats_text").replace("{users}",a.n).replace("{content}",b.n));}
 }
+async function health(env) {
+  if (!env.DB || typeof env.DB.prepare !== "function") {
+    return Response.json({status:"error",database:"unavailable"},{status:503});
+  }
+  try {
+    await env.DB.prepare("SELECT 1 AS ok").first();
+    return Response.json({status:"ok",database:"ok"});
+  } catch (error) {
+    console.error("Health check failed", error);
+    return Response.json({status:"error",database:"unavailable"},{status:503});
+  }
+}
+
+async function claimUpdate(env, updateId) {
+  // A short lease lets Telegram retries recover from a Worker crash while
+  // preventing concurrent delivery of the same update in normal operation.
+  return env.DB.prepare(
+    "INSERT INTO processed_updates(update_id,status,updated_at) VALUES(?,'processing',CURRENT_TIMESTAMP) " +
+    "ON CONFLICT(update_id) DO UPDATE SET status='processing',updated_at=CURRENT_TIMESTAMP " +
+    "WHERE processed_updates.status='failed' OR processed_updates.updated_at < datetime('now','-5 minutes') " +
+    "RETURNING update_id"
+  ).bind(updateId).first();
+}
+
 export default {
   async fetch(request,env) {
     const url=new URL(request.url);
     if(request.method==="GET"&&url.pathname==="/")return new Response("LiberiumBot Cloudflare Worker is running.");
+    if(request.method==="GET"&&url.pathname==="/healthz")return health(env);
     if(request.method!=="POST"||url.pathname!=="/telegram/webhook")return new Response("Not found",{status:404});
-    if(env.WEBHOOK_SECRET && request.headers.get("X-Telegram-Bot-Api-Secret-Token")!==env.WEBHOOK_SECRET)return new Response("Unauthorized",{status:401});
-    let update;try{update=await request.json()}catch{return new Response("Bad request",{status:400});}
-    try { if(update.message)await handleMessage(env,update.message); else if(update.callback_query)await handleCallback(env,update.callback_query); }
-    catch(e){console.error("Update handler failed",e);if(update.message?.chat?.id)await send(env,update.message.chat.id,"⚠️ Temporary error. Please try again.");}
-    return new Response("OK");
+
+    if(!env.BOT_TOKEN || !env.WEBHOOK_SECRET || !env.DB) {
+      console.error("Webhook configuration is incomplete.");
+      return new Response("Service unavailable",{status:503});
+    }
+    if(request.headers.get("X-Telegram-Bot-Api-Secret-Token")!==env.WEBHOOK_SECRET) {
+      return new Response("Unauthorized",{status:401});
+    }
+
+    let update;
+    try { update=await request.json(); }
+    catch { return new Response("Bad request",{status:400}); }
+    if(!Number.isSafeInteger(update?.update_id) || update.update_id<0) {
+      return new Response("Invalid update",{status:400});
+    }
+
+    try {
+      const claim=await claimUpdate(env,update.update_id);
+      if(!claim) return new Response("Duplicate update",{status:200});
+      if(update.message) await handleMessage(env,update.message);
+      else if(update.callback_query) await handleCallback(env,update.callback_query);
+      await env.DB.prepare("UPDATE processed_updates SET status='processed',updated_at=CURRENT_TIMESTAMP WHERE update_id=?").bind(update.update_id).run();
+      return new Response("OK");
+    } catch(error) {
+      console.error("Update handler failed",error);
+      try {
+        await env.DB.prepare("UPDATE processed_updates SET status='failed',updated_at=CURRENT_TIMESTAMP WHERE update_id=?").bind(update.update_id).run();
+      } catch(markError) {
+        console.error("Could not mark Telegram update as failed",markError);
+      }
+      // A non-2xx response asks Telegram to retry the update.
+      return new Response("Temporary processing failure",{status:503});
+    }
   }
 };

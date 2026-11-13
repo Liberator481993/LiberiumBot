@@ -89,8 +89,54 @@ jobs:
           printf '%s' "$TEST_ADMIN_IDS" | npx wrangler secret put ADMIN_IDS --config wrangler.test.toml
           printf '%s' "$TEST_WEBHOOK_SECRET" | npx wrangler secret put WEBHOOK_SECRET --config wrangler.test.toml
 
+      - name: Configure Telegram webhook for TEST bot only
+        env:
+          TEST_BOT_TOKEN: ${{ secrets.TEST_BOT_TOKEN }}
+          TEST_WEBHOOK_SECRET: ${{ secrets.TEST_WEBHOOK_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! [[ "$TEST_WEBHOOK_SECRET" =~ ^[A-Za-z0-9_-]{32,256}$ ]]; then
+            echo "::error::TEST_WEBHOOK_SECRET must be 32-256 characters using only A-Z, a-z, 0-9, _ or -."
+            exit 1
+          fi
+          response="$(curl --fail --silent --show-error --request POST \
+            "https://api.telegram.org/bot${TEST_BOT_TOKEN}/setWebhook" \
+            --data-urlencode "url=https://liberiumbot-test.pavloosakura.workers.dev/telegram/webhook" \
+            --data-urlencode "secret_token=${TEST_WEBHOOK_SECRET}" \
+            --data-urlencode 'allowed_updates=["message","callback_query"]')"
+          RESPONSE="$response" node -e '
+            const result = JSON.parse(process.env.RESPONSE);
+            if (!result.ok) {
+              console.error("Telegram rejected the TEST bot webhook:", result.description || "unknown error");
+              process.exit(1);
+            }
+            console.log("Telegram TEST bot webhook configured successfully.");
+          '
+
+      - name: Verify TEST bot webhook
+        env:
+          TEST_BOT_TOKEN: ${{ secrets.TEST_BOT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --fail --silent --show-error \
+            "https://api.telegram.org/bot${TEST_BOT_TOKEN}/getWebhookInfo")"
+          RESPONSE="$response" node -e '
+            const result = JSON.parse(process.env.RESPONSE);
+            if (!result.ok || !result.result?.url?.endsWith("/telegram/webhook")) {
+              console.error("TEST bot webhook verification failed.");
+              process.exit(1);
+            }
+            console.log("Verified TEST webhook URL:", result.result.url);
+            console.log("Pending updates:", result.result.pending_update_count);
+            if (result.result.last_error_message) {
+              console.log("Telegram last error:", result.result.last_error_message);
+            }
+          '
+
       - name: Report test Worker URL
         run: |
-          echo "TEST Worker deployment completed."
-          echo "Expected URL: https://liberiumbot-test.pavloosakura.workers.dev"
-          echo "No Telegram webhook was configured. The test bot will not receive updates until a separate webhook setup step is approved."
+          echo "TEST Worker deployment and TEST Telegram webhook completed."
+          echo "Worker: https://liberiumbot-test.pavloosakura.workers.dev"
+          echo "Only the isolated TEST bot was configured; production bot and channel were not changed."

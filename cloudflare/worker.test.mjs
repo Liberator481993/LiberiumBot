@@ -36,3 +36,22 @@ test("D1 schema stores media metadata for content", () => {
   assert.match(schema, /image_file_id TEXT NOT NULL DEFAULT ''/);
   assert.match(schema, /UNIQUE\(category, slug\)/);
 });
+
+test("webhook requires all production bindings and a matching secret", () => {
+  assert.match(worker, /!env\.BOT_TOKEN \|\| !env\.WEBHOOK_SECRET \|\| !env\.DB/);
+  assert.match(worker, /X-Telegram-Bot-Api-Secret-Token/);
+  assert.match(worker, /status:401/);
+});
+
+test("webhook deduplicates updates and asks Telegram to retry processing failures", () => {
+  assert.match(worker, /CREATE TABLE IF NOT EXISTS processed_updates/);
+  assert.match(worker, /claimUpdate\(env,update\.update_id\)/);
+  assert.match(worker, /status='processed'/);
+  assert.match(worker, /status='failed'/);
+  assert.match(worker, /status:503/);
+});
+
+test("health endpoint checks the persistent D1 binding", () => {
+  assert.match(worker, /url\.pathname==="\/healthz"/);
+  assert.match(worker, /SELECT 1 AS ok/);
+});

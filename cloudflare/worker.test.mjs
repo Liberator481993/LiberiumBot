@@ -31,6 +31,14 @@ test("channel publishing and media-preserving broadcast are wired", () => {
   assert.match(worker, /"copyMessage"/);
 });
 
+test("channel post wizard offers and preserves all three button styles", () => {
+  assert.match(worker, /adm:post:style:primary/);
+  assert.match(worker, /adm:post:style:success/);
+  assert.match(worker, /adm:post:style:danger/);
+  assert.match(worker, /post_button_style/);
+  assert.match(worker, /style:d\.post_button_style\|\|"primary"/);
+});
+
 test("D1 schema stores media metadata for content", () => {
   assert.match(schema, /file_id TEXT NOT NULL DEFAULT ''/);
   assert.match(schema, /file_name TEXT NOT NULL DEFAULT ''/);

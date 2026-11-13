@@ -1,0 +1,12 @@
+name = "liberiumbot-test"
+main = "cloudflare/worker.js"
+compatibility_date = "2026-11-13"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "liberiumbot-test"
+database_id = "02c6a0c3-b32d-4740-8973-d455555c8b72"
+
+[vars]
+CHANNEL_ID = "-1004474178126"
+CHANNEL_URL = "https://t.me/+IINCMlJqAolkZGFh"

@@ -1,0 +1,6 @@
+One-time trigger for the isolated LiberiumBot TEST Worker deployment. This file is the only path watched by the test deployment workflow.
+
+Trigger isolated TEST Worker deployment and Telegram webhook configuration.
+Retry test webhook setup with Telegram-compatible secret.
+
+Redeploy TEST Worker after explicit unauthorized /admin denial fix.

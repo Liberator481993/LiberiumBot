@@ -1,0 +1,142 @@
+name: Deploy LiberiumBot TEST Worker
+
+on:
+  push:
+    branches:
+      - cloudflare-worker-port
+    paths:
+      - ".github/test-deploy-trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liberiumbot-test-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy-test:
+    if: ${{ github.ref == 'refs/heads/cloudflare-worker-port' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out migration branch
+        uses: actions/checkout@v4
+
+      - name: Validate test-only configuration and secrets
+        env:
+          CF_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TEST_BOT_TOKEN: ${{ secrets.TEST_BOT_TOKEN }}
+          TEST_ADMIN_IDS: ${{ secrets.TEST_ADMIN_IDS }}
+          TEST_WEBHOOK_SECRET: ${{ secrets.TEST_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$CF_ACCOUNT_ID" || { echo "::error::Missing repository variable CLOUDFLARE_ACCOUNT_ID."; exit 1; }
+          test -n "$CF_API_TOKEN" || { echo "::error::Missing repository secret CLOUDFLARE_API_TOKEN."; exit 1; }
+          test -n "$TEST_BOT_TOKEN" || { echo "::error::Missing TEST_BOT_TOKEN secret."; exit 1; }
+          test -n "$TEST_ADMIN_IDS" || { echo "::error::Missing TEST_ADMIN_IDS secret (numeric Telegram user ID)."; exit 1; }
+          test -n "$TEST_WEBHOOK_SECRET" || { echo "::error::Missing TEST_WEBHOOK_SECRET secret."; exit 1; }
+          test "${#TEST_WEBHOOK_SECRET}" -ge 32 || { echo "::error::TEST_WEBHOOK_SECRET must be at least 32 characters."; exit 1; }
+          grep -q 'name = "liberiumbot-test"' wrangler.test.toml
+          grep -q 'database_name = "liberiumbot-test"' wrangler.test.toml
+          grep -q 'database_id = "02c6a0c3-b32d-4740-8973-d455555c8b72"' wrangler.test.toml
+          grep -q 'CHANNEL_ID = "-1004474178126"' wrangler.test.toml
+          ! grep -q 'mm2hubscripts' wrangler.test.toml
+          echo "Test-only deployment configuration validated."
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Wrangler
+        run: npm install --no-save wrangler@^4
+
+      - name: Validate Worker and migration tests
+        run: |
+          node --check cloudflare/worker.js
+          node --test cloudflare/worker.test.mjs
+          python -m unittest cloudflare.test_schema cloudflare.test_export_sqlite_to_d1 -v
+
+      - name: Apply schema to TEST D1 only
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler d1 execute liberiumbot-test --remote --file=cloudflare/schema.sql --config wrangler.test.toml
+
+      - name: Deploy TEST Worker only
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy --config wrangler.test.toml
+
+      - name: Configure encrypted secrets on TEST Worker only
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TEST_BOT_TOKEN: ${{ secrets.TEST_BOT_TOKEN }}
+          TEST_ADMIN_IDS: ${{ secrets.TEST_ADMIN_IDS }}
+          TEST_WEBHOOK_SECRET: ${{ secrets.TEST_WEBHOOK_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$TEST_BOT_TOKEN" | npx wrangler secret put BOT_TOKEN --config wrangler.test.toml
+          printf '%s' "$TEST_ADMIN_IDS" | npx wrangler secret put ADMIN_IDS --config wrangler.test.toml
+          # Telegram accepts only URL-safe characters in secret_token.
+          WEBHOOK_SECRET="$(printf '%s' "$TEST_WEBHOOK_SECRET" | sha256sum | cut -d' ' -f1)"
+          printf '%s' "$WEBHOOK_SECRET" | npx wrangler secret put WEBHOOK_SECRET --config wrangler.test.toml
+
+      - name: Configure Telegram webhook for TEST bot only
+        env:
+          TEST_BOT_TOKEN: ${{ secrets.TEST_BOT_TOKEN }}
+          TEST_WEBHOOK_SECRET: ${{ secrets.TEST_WEBHOOK_SECRET }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Derive a Telegram-compatible secret from the repository secret.
+          WEBHOOK_SECRET="$(printf '%s' "$TEST_WEBHOOK_SECRET" | sha256sum | cut -d' ' -f1)"
+          response="$(curl --fail --silent --show-error --request POST \
+            "https://api.telegram.org/bot${TEST_BOT_TOKEN}/setWebhook" \
+            --data-urlencode "url=https://liberiumbot-test.pavloosakura.workers.dev/telegram/webhook" \
+            --data-urlencode "secret_token=${WEBHOOK_SECRET}" \
+            --data-urlencode 'allowed_updates=["message","callback_query"]')"
+          RESPONSE="$response" node -e '
+            const result = JSON.parse(process.env.RESPONSE);
+            if (!result.ok) {
+              console.error("Telegram rejected the TEST bot webhook:", result.description || "unknown error");
+              process.exit(1);
+            }
+            console.log("Telegram TEST bot webhook configured successfully.");
+          '
+
+      - name: Verify TEST bot webhook
+        env:
+          TEST_BOT_TOKEN: ${{ secrets.TEST_BOT_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --fail --silent --show-error \
+            "https://api.telegram.org/bot${TEST_BOT_TOKEN}/getWebhookInfo")"
+          RESPONSE="$response" node -e '
+            const result = JSON.parse(process.env.RESPONSE);
+            if (!result.ok || !result.result?.url?.endsWith("/telegram/webhook")) {
+              console.error("TEST bot webhook verification failed.");
+              process.exit(1);
+            }
+            console.log("Verified TEST webhook URL:", result.result.url);
+            console.log("Pending updates:", result.result.pending_update_count);
+            if (result.result.last_error_message) {
+              console.log("Telegram last error:", result.result.last_error_message);
+            }
+          '
+
+      - name: Report test Worker URL
+        run: |
+          echo "TEST Worker deployment and TEST Telegram webhook completed."
+          echo "Worker: https://liberiumbot-test.pavloosakura.workers.dev"
+          echo "Only the isolated TEST bot was configured; production bot and channel were not changed."

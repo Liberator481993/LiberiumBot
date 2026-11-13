@@ -1,0 +1,37 @@
+name: Cloudflare Worker validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [cloudflare-worker-port]
+  pull_request:
+    branches: [cloudflare-worker-port]
+
+permissions:
+  contents: read
+
+jobs:
+  validate-worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check Worker JavaScript syntax
+        run: node --check cloudflare/worker.js
+      - name: Set up Python for migration and schema tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test clean-start D1 schema
+        run: python -m unittest cloudflare.test_schema -v
+      - name: Test SQLite to D1 export
+        run: python -m unittest cloudflare.test_export_sqlite_to_d1 -v
+      - name: Run Worker runtime tests
+        run: node --test cloudflare/worker.test.mjs
+      - name: Verify migration files
+        run: |
+          test -s cloudflare/schema.sql
+          test -s wrangler.toml
+          test -s package.json

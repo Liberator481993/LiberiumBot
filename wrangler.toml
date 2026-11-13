@@ -1,0 +1,12 @@
+name = "liberiumbot"
+main = "cloudflare/worker.js"
+compatibility_date = "2026-11-13"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "liberiumbot"
+database_id = "53cb791c-0c7a-4204-a3a9-67e07bd548ca"
+
+[vars]
+CHANNEL_ID = "@mm2hubscripts"
+CHANNEL_URL = "https://t.me/mm2hubscripts"

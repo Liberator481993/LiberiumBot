@@ -83,6 +83,10 @@ Actions tab after adding repository secrets `BOT_TOKEN` and `ADMIN_IDS`.
 It starts one temporary long-polling session for up to 330 minutes. Do not run it while
 another instance of this bot is polling with the same token.
 
-This workflow is for a short test only, not production hosting. The runner is temporary
-and its local SQLite database is discarded after the job ends. Use a persistent always-on
-host and persistent storage for a live bot.
+This workflow is for a short test only, not production hosting. The runner is temporary and is not 24/7 hosting. The workflow now restores the latest
+available `liberium-sqlite-db` artifact from a previous successful session and uploads a
+consistent SQLite snapshot after the polling process exits. Artifacts are retained for 30 days
+and are accessible only to repository collaborators with appropriate access. The first run
+after this change has no prior artifact to restore, so it starts with an empty database unless
+an earlier backup is manually supplied. This is a continuity aid for manual test sessions,
+not a substitute for durable production hosting or independent backups.

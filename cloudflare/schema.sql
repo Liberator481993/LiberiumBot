@@ -1,0 +1,37 @@
+CREATE TABLE IF NOT EXISTS users (
+  user_id INTEGER PRIMARY KEY,
+  username TEXT NOT NULL DEFAULT '',
+  first_name TEXT NOT NULL DEFAULT '',
+  language TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS content_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  category TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  title_ru TEXT NOT NULL,
+  title_en TEXT NOT NULL,
+  body_ru TEXT NOT NULL DEFAULT '',
+  body_en TEXT NOT NULL DEFAULT '',
+  version TEXT NOT NULL DEFAULT '',
+  url TEXT NOT NULL DEFAULT '',
+  file_id TEXT NOT NULL DEFAULT '',
+  file_name TEXT NOT NULL DEFAULT '',
+  image_file_id TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(category, slug)
+);
+CREATE TABLE IF NOT EXISTS user_state (
+  user_id INTEGER PRIMARY KEY,
+  step TEXT NOT NULL,
+  data TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS processed_updates (
+  update_id INTEGER PRIMARY KEY,
+  status TEXT NOT NULL CHECK(status IN ('processing','processed','failed')),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_processed_updates_status_updated
+  ON processed_updates(status, updated_at);

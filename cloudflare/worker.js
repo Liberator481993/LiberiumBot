@@ -75,7 +75,7 @@ async function handleMessage(env,m) {
   if(text==="/cancel") { await clearState(env,id); return send(env,chat,lang==="ru"?"Действие отменено.":"Action cancelled."); }
   if(text==="/admin" && admins(env).has(String(id))) {
     if(!(await access(env,chat,id,lang))) return;
-    return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")],[btn(tr(lang,"back"),"nav:home")]])});
+    return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(lang==="ru"?"📢 Создать пост в канал":"📢 Create channel post","adm:channel_post")],[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")],[btn(tr(lang,"back"),"nav:home")]])});
   }
   const st=await state(env,id);
   if(st && admins(env).has(String(id)) && (text || m.document || m.photo)) {
@@ -122,13 +122,12 @@ async function handleMessage(env,m) {
     }
     if(step==="post_button") {
       if(!text.trim()||text.trim().length>64) return send(env,chat,lang==="ru"?"Текст кнопки должен быть от 1 до 64 символов.":"Button label must be 1–64 characters.");
-      d.post_button=text.trim(); await setState(env,id,"post_confirm",d);
-      const me=await tg(env,"getMe",{});
-      if(!me.ok||!me.result.username) { await clearState(env,id); return send(env,chat,tr(lang,"invalid")); }
-      const markup=kb([[{text:d.post_button,url:"https://t.me/"+me.result.username+"?start=home"}]]);
-      if(d.post_photo_id) await tg(env,"sendPhoto",{chat_id:chat,photo:d.post_photo_id,caption:d.post_text,reply_markup:markup});
-      else await send(env,chat,esc(d.post_text),{reply_markup:markup});
-      return send(env,chat,lang==="ru"?"Предпросмотр готов. Нажми «Опубликовать» или /cancel.":"Preview ready. Press Publish or /cancel.",{reply_markup:kb([[btn(lang==="ru"?"🚀 Опубликовать":"🚀 Publish","adm:post:publish")],[btn(lang==="ru"?"✖️ Отмена":"✖️ Cancel","adm:post:cancel")]])});
+      d.post_button=text.trim(); await setState(env,id,"post_style",d);
+      return send(env,chat,lang==="ru"?"Выбери цвет кнопки:":"Choose the button colour:",{reply_markup:kb([
+        [{text:lang==="ru"?"🔵 Синий":"🔵 Blue",callback_data:"adm:post:style:primary",style:"primary"}],
+        [{text:lang==="ru"?"🟢 Зелёный":"🟢 Green",callback_data:"adm:post:style:success",style:"success"}],
+        [{text:lang==="ru"?"🔴 Красный":"🔴 Red",callback_data:"adm:post:style:danger",style:"danger"}]
+      ])});
     }
     if(step==="title_ru"||step==="title_en"||step==="body_ru"||step==="body_en"||step==="version"||step==="url"||step==="file") {
       const key=step; d[key]=text==="/"?"":text;
@@ -193,12 +192,26 @@ async function handleCallback(env,c) {
   if(data==="adm:content")return send(env,chat,tr(lang,"cat"),{reply_markup:kb([["scripts","injectors","guides"].map(x=>btn(tr(lang,x),`adm:cat:${x}`)),[btn(tr(lang,"back"),"adm:home")]])});
   if(data==="adm:channel_post"){await setState(env,id,"post_text",{});return send(env,chat,lang==="ru"?"Отправь текст поста для канала:":"Send the channel post text:");}
   if(data==="adm:post:cancel"){await clearState(env,id);return send(env,chat,lang==="ru"?"Публикация отменена.":"Post cancelled.");}
+  if(data.startsWith("adm:post:style:")){
+    const style=data.split(":")[3];
+    if(!["primary","success","danger"].includes(style))return send(env,chat,tr(lang,"invalid"));
+    const st=await state(env,id); let d={};try{d=JSON.parse(st?.data||"{}")}catch{}
+    if(st?.step!=="post_style")return send(env,chat,lang==="ru"?"Черновик публикации устарел. Начни заново.":"The post draft expired. Start again.");
+    d.post_button_style=style;
+    await setState(env,id,"post_confirm",d);
+    const me=await tg(env,"getMe",{});
+    if(!me.ok||!me.result.username){await clearState(env,id);return send(env,chat,tr(lang,"invalid"));}
+    const markup=kb([[{text:d.post_button,url:"https://t.me/"+me.result.username+"?start=home",style}]]);
+    if(d.post_photo_id) await tg(env,"sendPhoto",{chat_id:chat,photo:d.post_photo_id,caption:d.post_text,reply_markup:markup});
+    else await send(env,chat,esc(d.post_text),{reply_markup:markup});
+    return send(env,chat,lang==="ru"?"Предпросмотр готов. Нажми «Опубликовать» или /cancel.":"Preview ready. Press Publish or /cancel.",{reply_markup:kb([[btn(lang==="ru"?"🚀 Опубликовать":"🚀 Publish","adm:post:publish")],[btn(lang==="ru"?"✖️ Отмена":"✖️ Cancel","adm:post:cancel")]])});
+  }
   if(data==="adm:post:publish"){
     const st=await state(env,id); let d={};try{d=JSON.parse(st?.data||"{}")}catch{}
     if(st?.step!=="post_confirm")return send(env,chat,lang==="ru"?"Черновик не найден.":"Draft not found.");
     const me=await tg(env,"getMe",{});
     if(!me.ok||!me.result.username)return send(env,chat,tr(lang,"invalid"));
-    const markup=kb([[{text:d.post_button,url:"https://t.me/"+me.result.username+"?start=home"}]]);
+    const markup=kb([[{text:d.post_button,url:"https://t.me/"+me.result.username+"?start=home",style:d.post_button_style||"primary"}]]);
     const r=d.post_photo_id
       ? await tg(env,"sendPhoto",{chat_id:env.CHANNEL_ID||"@mm2hubscripts",photo:d.post_photo_id,caption:d.post_text,reply_markup:markup})
       : await send(env,env.CHANNEL_ID||"@mm2hubscripts",esc(d.post_text),{reply_markup:markup});

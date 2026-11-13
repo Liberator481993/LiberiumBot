@@ -20,6 +20,12 @@ jobs:
           node-version: "22"
       - name: Check Worker JavaScript syntax
         run: node --check cloudflare/worker.js
+      - name: Set up Python for migration tests
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Test SQLite to D1 export
+        run: python -m unittest cloudflare.test_export_sqlite_to_d1 -v
       - name: Run migration smoke tests
         run: node --test cloudflare/worker.test.mjs
       - name: Verify migration files

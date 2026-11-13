@@ -44,7 +44,7 @@ test("webhook requires all production bindings and a matching secret", () => {
 });
 
 test("webhook deduplicates updates and asks Telegram to retry processing failures", () => {
-  assert.match(worker, /CREATE TABLE IF NOT EXISTS processed_updates/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS processed_updates/);
   assert.match(worker, /claimUpdate\(env,update\.update_id\)/);
   assert.match(worker, /status='processed'/);
   assert.match(worker, /status='failed'/);

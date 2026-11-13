@@ -28,3 +28,10 @@ CREATE TABLE IF NOT EXISTS user_state (
   data TEXT NOT NULL DEFAULT '{}',
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS processed_updates (
+  update_id INTEGER PRIMARY KEY,
+  status TEXT NOT NULL CHECK(status IN ('processing','processed','failed')),
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_processed_updates_status_updated
+  ON processed_updates(status, updated_at);

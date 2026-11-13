@@ -87,7 +87,9 @@ jobs:
           set -euo pipefail
           printf '%s' "$TEST_BOT_TOKEN" | npx wrangler secret put BOT_TOKEN --config wrangler.test.toml
           printf '%s' "$TEST_ADMIN_IDS" | npx wrangler secret put ADMIN_IDS --config wrangler.test.toml
-          printf '%s' "$TEST_WEBHOOK_SECRET" | npx wrangler secret put WEBHOOK_SECRET --config wrangler.test.toml
+          # Telegram accepts only URL-safe characters in secret_token.
+          WEBHOOK_SECRET="$(printf '%s' "$TEST_WEBHOOK_SECRET" | sha256sum | cut -d' ' -f1)"
+          printf '%s' "$WEBHOOK_SECRET" | npx wrangler secret put WEBHOOK_SECRET --config wrangler.test.toml
 
       - name: Configure Telegram webhook for TEST bot only
         env:
@@ -96,14 +98,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if ! [[ "$TEST_WEBHOOK_SECRET" =~ ^[A-Za-z0-9_-]{32,256}$ ]]; then
-            echo "::error::TEST_WEBHOOK_SECRET must be 32-256 characters using only A-Z, a-z, 0-9, _ or -."
-            exit 1
-          fi
+          # Derive a Telegram-compatible secret from the repository secret.
+          WEBHOOK_SECRET="$(printf '%s' "$TEST_WEBHOOK_SECRET" | sha256sum | cut -d' ' -f1)"
           response="$(curl --fail --silent --show-error --request POST \
             "https://api.telegram.org/bot${TEST_BOT_TOKEN}/setWebhook" \
             --data-urlencode "url=https://liberiumbot-test.pavloosakura.workers.dev/telegram/webhook" \
-            --data-urlencode "secret_token=${TEST_WEBHOOK_SECRET}" \
+            --data-urlencode "secret_token=${WEBHOOK_SECRET}" \
             --data-urlencode 'allowed_updates=["message","callback_query"]')"
           RESPONSE="$response" node -e '
             const result = JSON.parse(process.env.RESPONSE);

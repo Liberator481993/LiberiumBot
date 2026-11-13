@@ -27,7 +27,7 @@ The owner has approved continuing with a **new, empty D1 database**. This means:
 - catalog items, files, images and published-content records must be re-entered through the admin panel;
 - the original Python bot on `main` remains untouched until the new Worker is tested and a production switch is explicitly approved.
 
-The D1 database `liberiumbot` has been created in Cloudflare, and its ID is configured in this migration branch's `wrangler.toml`. The owner applied the schema in the Cloudflare D1 Console and verified that `users`, `content_items`, `user_state`, and `processed_updates` are present. Empty-table row counts still need to be checked before setting `D1_CLEAN_START_VERIFIED=true`.
+The D1 database `liberiumbot` has been created in Cloudflare, and its ID is configured in this migration branch's `wrangler.toml`. The owner applied the schema in the Cloudflare D1 Console and verified that `users`, `content_items`, `user_state`, and `processed_updates` are present. A count query confirmed that all four application tables currently contain zero rows. The GitHub Actions repository variable `D1_CLEAN_START_VERIFIED=true` still needs to be set manually before the gated deployment workflow can proceed.
 
 ## SQLite → D1 data migration (optional recovery path)
 
@@ -97,12 +97,12 @@ These limits may be enough for a small bot, but they are not an uptime guarantee
 and consider Workers Paid if real traffic exceeds the free quotas.
 
 ## Known gaps before production
-- The schema and offline migration utility have automated tests. The schema is applied to the remote D1 database and the four application tables are visible; row counts have not yet been checked.
+- The schema and offline migration utility have automated tests. The schema is applied to the remote D1 database; the four application tables are visible and their verified row counts are all zero.
 - No live Telegram integration test; CI performs JavaScript syntax validation and offline migration smoke tests.
 - Broadcast retry handling is basic; failed recipients are counted but not persisted for a retry campaign.
 - Channel button styling is ported from the Python bot and covered by offline tests; live Telegram compatibility still needs verification with a non-production test bot.
 - The existing SQLite database is not automatically synchronized with D1.
-- The D1 database ID is configured in `wrangler.toml`; remote schema initialization and live verification are still pending.
+- The D1 database ID is configured in `wrangler.toml`; remote schema initialization and empty-table verification are complete. Worker deployment and live Telegram verification are still pending.
 
 ## Cloudflare setup (do not deploy until the clean-start or migration checks are complete)
 1. Create a D1 database named `liberiumbot`.

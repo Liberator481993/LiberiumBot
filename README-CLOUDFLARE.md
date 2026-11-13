@@ -13,7 +13,7 @@ This is a separate migration branch. The original Python/aiogram polling bot rem
 - Russian and English interface, language selection, subscription check, profile and catalog navigation.
 - Admin content wizard accepts Telegram documents and photos and stores their `file_id` metadata in D1.
 - Catalog delivery sends stored images with `sendPhoto` and attached files with `sendDocument`.
-- Admin channel-post wizard supports text or photo posts with a custom URL button and a confirmation step.
+- Admin channel-post wizard supports text or photo posts, a custom URL button, blue/green/red button styles, and a confirmation step.
 - Broadcast copies the original Telegram message, preserving supported media, and applies a basic delay / 429 retry wait.
 - Basic content management and statistics.
 
@@ -27,7 +27,7 @@ The owner has approved continuing with a **new, empty D1 database**. This means:
 - catalog items, files, images and published-content records must be re-entered through the admin panel;
 - the original Python bot on `main` remains untouched until the new Worker is tested and a production switch is explicitly approved.
 
-The D1 database `liberiumbot` has already been created in Cloudflare, and its ID is configured in this migration branch's `wrangler.toml`. The schema has not yet been confirmed applied to the remote database.
+The D1 database `liberiumbot` has been created in Cloudflare, and its ID is configured in this migration branch's `wrangler.toml`. The owner applied the schema in the Cloudflare D1 Console and verified that `users`, `content_items`, `user_state`, and `processed_updates` are present. Empty-table row counts still need to be checked before setting `D1_CLEAN_START_VERIFIED=true`.
 
 ## SQLite → D1 data migration (optional recovery path)
 
@@ -97,10 +97,10 @@ These limits may be enough for a small bot, but they are not an uptime guarantee
 and consider Workers Paid if real traffic exceeds the free quotas.
 
 ## Known gaps before production
-- The schema and offline migration utility have automated tests. The schema has **not yet** been applied to the live D1 database, and no live database row counts have been checked.
+- The schema and offline migration utility have automated tests. The schema is applied to the remote D1 database and the four application tables are visible; row counts have not yet been checked.
 - No live Telegram integration test; CI performs JavaScript syntax validation and offline migration smoke tests.
 - Broadcast retry handling is basic; failed recipients are counted but not persisted for a retry campaign.
-- Channel button colour selection is not exposed in this Worker port; Telegram Bot API button styling compatibility needs separate verification.
+- Channel button styling is ported from the Python bot and covered by offline tests; live Telegram compatibility still needs verification with a non-production test bot.
 - The existing SQLite database is not automatically synchronized with D1.
 - The D1 database ID is configured in `wrangler.toml`; remote schema initialization and live verification are still pending.
 

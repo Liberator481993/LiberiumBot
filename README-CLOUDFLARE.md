@@ -56,9 +56,18 @@ Before first deployment:
 3. Copy the D1 database ID into `wrangler.toml` (replace the placeholder).
 4. Configure Worker secrets `BOT_TOKEN`, `ADMIN_IDS`, and a strong random `WEBHOOK_SECRET`.
    The webhook refuses requests if any required secret or the D1 binding is missing.
-5. Deploy only after importing and verifying the real SQLite data, then test
-   `GET /healthz` and the webhook using a non-production test bot if possible.
-6. Only after verification, set Telegram's webhook with the same secret token. Never run polling
+5. In Cloudflare Dashboard → Workers & Pages → liberiumbot → Settings → Variables and Secrets,
+   add these as encrypted secrets: `BOT_TOKEN`, `ADMIN_IDS`, and a strong random `WEBHOOK_SECRET`.
+   Do not put the Telegram token in Git or ordinary Worker variables.
+6. In GitHub repository Settings → Secrets and variables → Actions, add:
+   - Secret `CLOUDFLARE_API_TOKEN` (Cloudflare API token with the minimum required Workers and D1 permissions).
+   - Variables `CLOUDFLARE_ACCOUNT_ID` and `D1_DATABASE_ID`.
+   - Variable `D1_MIGRATION_VERIFIED=true` only after the actual SQLite export has been imported and row counts verified.
+7. The manual workflow `.github/workflows/cloudflare-deploy.yml` is gated: its default is `no`.
+   It will refuse to deploy unless the Cloudflare credentials, D1 ID and migration-verification
+   variable are present. Select `yes` only after completing all prerequisites.
+8. After deployment, test `GET /healthz` and the webhook using a non-production test bot if possible.
+   Only after verification, set Telegram's webhook with the same secret token. Never run polling
    and webhook delivery simultaneously for the same bot token.
 
 `GET /healthz` checks that D1 can execute a query and returns HTTP 503 if the binding/database
@@ -91,4 +100,4 @@ and consider Workers Paid if real traffic exceeds the free quotas.
 6. Set Telegram webhook to `https://<worker-host>/telegram/webhook` with the same secret token. Do this only after the Worker is deployed and verified.
 7. Disable the old polling process before setting the webhook. Telegram does not allow polling and webhook delivery at the same time for one bot token.
 
-Do not deploy until D1 is created, its ID is configured, secrets are set, SQLite data migration has been run and verified, and the production parity checklist is complete.
+Do not deploy until D1 is created, its ID is configured, Worker secrets are set, SQLite data migration has been run and verified, and the production parity checklist is complete. The deployment workflow does not create a D1 database, recover a missing SQLite file, import user data, or set Telegram's webhook.

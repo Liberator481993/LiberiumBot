@@ -98,11 +98,11 @@ and consider Workers Paid if real traffic exceeds the free quotas.
 
 ## Known gaps before production
 - The schema and offline migration utility have automated tests. The schema is applied to the remote D1 database; the four application tables are visible and their verified row counts are all zero.
-- No live Telegram integration test; CI performs JavaScript syntax validation and offline migration smoke tests.
+- The isolated TEST Worker has been deployed to `liberiumbot-test`; GitHub Actions configured and verified the webhook for `TEST_BOT_TOKEN` only. This confirms deployment and webhook setup, not a complete interactive bot test.
 - Broadcast retry handling is basic; failed recipients are counted but not persisted for a retry campaign.
 - Channel button styling is ported from the Python bot and covered by offline tests; live Telegram compatibility still needs verification with a non-production test bot.
 - The existing SQLite database is not automatically synchronized with D1.
-- The D1 database ID is configured in `wrangler.toml`; remote schema initialization and empty-table verification are complete. Worker deployment and live Telegram verification are still pending.
+- The production D1 database ID is configured in `wrangler.toml`; remote schema initialization and empty-table verification are complete. A complete live Telegram scenario pass remains pending. Production Worker deployment and production webhook setup require separate explicit approval.
 
 ## Cloudflare setup (do not deploy until the clean-start or migration checks are complete)
 1. Create a D1 database named `liberiumbot`.

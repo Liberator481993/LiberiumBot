@@ -94,9 +94,8 @@ and consider Workers Paid if real traffic exceeds the free quotas.
 
 ## Known gaps before production
 - The schema and offline migration utility have automated tests. The schema is applied to the remote D1 database; the four application tables are visible and their verified row counts are all zero.
-- The isolated TEST Worker has been deployed to `liberiumbot-test`; GitHub Actions configured and verified the webhook for `TEST_BOT_TOKEN` only. The owner has now reported that the live interactive test of the TEST bot is complete and all tested flows work.
+- The isolated TEST Worker has been deployed to `liberiumbot-test`; GitHub Actions configured and verified the webhook for `TEST_BOT_TOKEN` only. The owner reports that the live interactive TEST-bot acceptance pass is complete and the tested flows work.
 - Broadcast retry handling is basic; failed recipients are counted but not persisted for a retry campaign.
-- The owner reports that the full interactive TEST-bot acceptance pass is complete and the tested Telegram flows work.
 - The existing SQLite database is not automatically synchronized with D1.
 - The production D1 database ID is configured in `wrangler.toml`; remote schema initialization and the empty-table check were previously verified. The live TEST-bot acceptance pass is complete per the owner. The read-only production preflight and gated production deployment workflows are prepared, but neither has been run. Production Worker deployment and production webhook setup remain separate operations.
 

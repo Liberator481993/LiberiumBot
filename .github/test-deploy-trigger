@@ -3,4 +3,4 @@ One-time trigger for the isolated LiberiumBot TEST Worker deployment. This file 
 Trigger isolated TEST Worker deployment and Telegram webhook configuration.
 Retry test webhook setup with Telegram-compatible secret.
 
-Redeploy TEST Worker after explicit unauthorized /admin denial fix.
+Redeploy TEST Worker after parity fixes and automated /healthz verification (2026-11-14).

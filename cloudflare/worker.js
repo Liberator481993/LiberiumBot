@@ -37,6 +37,43 @@ async function send(env, chat_id, text, extra={}) {
 async function copyBroadcast(env, sourceChat, sourceMessage, targetChat) {
   return tg(env,"copyMessage",{chat_id:targetChat,from_chat_id:sourceChat,message_id:sourceMessage});
 }
+async function sendTextFileAsCode(env,chat,fileId) {
+  try {
+    const info=await tg(env,"getFile",{file_id:fileId});
+    const path=info.result?.file_path;
+    if(!info.ok||!path) return false;
+    if(Number(info.result.file_size||0)>100000) return false;
+
+    const response=await fetch(`https://api.telegram.org/file/bot${env.BOT_TOKEN}/${encodeURI(path)}`);
+    if(!response.ok) return false;
+    const bytes=await response.arrayBuffer();
+    if(bytes.byteLength>100000) return false;
+
+    let source;
+    try { source=new TextDecoder("utf-8",{fatal:true}).decode(bytes); }
+    catch { return false; }
+
+    if(!source.length) {
+      const result=await send(env,chat,"<pre><code></code></pre>");
+      return !!result.ok;
+    }
+    while(source.length) {
+      let cut=Math.min(source.length,3800);
+      if(cut<source.length) {
+        const newline=source.lastIndexOf("\n",cut);
+        if(newline>0) cut=newline+1;
+      }
+      const chunk=source.slice(0,cut);
+      const result=await send(env,chat,`<pre><code>${esc(chunk)}</code></pre>`);
+      if(!result.ok) return false;
+      source=source.slice(cut);
+    }
+    return true;
+  } catch(error) {
+    console.error("Text file rendering failed",error);
+    return false;
+  }
+}
 async function user(env,id,from={}) {
   await env.DB.prepare("INSERT INTO users(user_id,username,first_name,language,created_at,last_seen_at) VALUES(?,?,?,'',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT(user_id) DO UPDATE SET username=excluded.username,first_name=excluded.first_name,last_seen_at=CURRENT_TIMESTAMP")
     .bind(id,from.username||"",from.first_name||"").run();
@@ -48,9 +85,28 @@ async function subscribed(env,id) {
 }
 const admins=(env)=>new Set(String(env.ADMIN_IDS||"").split(",").map(x=>x.trim()).filter(Boolean));
 async function home(env,chat,id,lang) {
-  const rows=[[{text:tr(lang,"scripts"),callback_data:"cat:scripts"},{text:tr(lang,"injectors"),callback_data:"cat:injectors"}],[{text:tr(lang,"guides"),callback_data:"cat:guides"},{text:tr(lang,"profile"),callback_data:"profile"}],[{text:tr(lang,"language"),callback_data:"language"}]];
-  if(admins(env).has(String(id))) rows.push([btn(tr(lang,"admin"),"adm:home")]);
-  await send(env,chat,tr(lang,"welcome"),{reply_markup:kb(rows)});
+  const rows = [
+    [{text:tr(lang,"scripts")},{text:tr(lang,"injectors")}],
+    [{text:tr(lang,"guides")},{text:tr(lang,"profile")}],
+    [{text:tr(lang,"language")}],
+  ];
+  if(admins(env).has(String(id))) rows.push([{text:tr(lang,"admin")}]);
+  await send(env,chat,tr(lang,"welcome"),{
+    reply_markup:{
+      keyboard:rows,
+      resize_keyboard:true,
+      input_field_placeholder:tr(lang,"choose")
+    }
+  });
+}
+async function adminHome(env,chat,lang) {
+  return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([
+    [btn(lang==="ru"?"📢 Создать пост в канал":"📢 Create channel post","adm:channel_post")],
+    [btn(tr(lang,"content"),"adm:content")],
+    [btn(tr(lang,"broadcast"),"adm:broadcast")],
+    [btn(tr(lang,"stats"),"adm:stats")],
+    [btn(tr(lang,"back"),"nav:home")]
+  ])});
 }
 async function access(env,chat,id,lang) {
   if(await subscribed(env,id)) return true;
@@ -72,11 +128,13 @@ async function handleMessage(env,m) {
     return;
   }
   if(text==="/help") return send(env,chat,tr(lang,"support"));
+  if(text==="/language") return send(env,chat,tr(lang,"choose_language"),{reply_markup:kb([[btn("🇷🇺 Русский","lang:ru"),btn("🇬🇧 English","lang:en")]])});
   if(text==="/cancel") { await clearState(env,id); return send(env,chat,lang==="ru"?"Действие отменено.":"Action cancelled."); }
-  if(text==="/admin") {
+  if(text==="/admin" || text===tr(lang,"admin")) {
     if(!admins(env).has(String(id))) return send(env,chat,tr(lang,"denied"));
     if(!(await access(env,chat,id,lang))) return;
-    return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(lang==="ru"?"📢 Создать пост в канал":"📢 Create channel post","adm:channel_post")],[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")],[btn(tr(lang,"back"),"nav:home")]])});
+    await clearState(env,id);
+    return adminHome(env,chat,lang);
   }
   const st=await state(env,id);
   if(st && admins(env).has(String(id)) && (text || m.document || m.photo)) {
@@ -131,6 +189,13 @@ async function handleMessage(env,m) {
       ])});
     }
     if(step==="title_ru"||step==="title_en"||step==="body_ru"||step==="body_en"||step==="version"||step==="url"||step==="file") {
+      if(["title_ru","title_en","body_ru","body_en","version","url"].includes(step) && !text.trim()) {
+        const promptKey=step==="version"?"version_q":step;
+        return send(env,chat,tr(lang,promptKey));
+      }
+      if(step==="url" && text.trim()!=="-" && !/^https?:\/\//i.test(text.trim())) {
+        return send(env,chat,tr(lang,"invalid"));
+      }
       const key=step; d[key]=text==="/"?"":text;
       const next=prompts[step];
       if(next) { await setState(env,id,next,d); return send(env,chat,tr(lang,next==="version"?"version_q":next==="url"?"url":next==="file"?"file":next)); }
@@ -144,7 +209,7 @@ async function handleMessage(env,m) {
   const labels={ [tr(lang,"scripts")]:"scripts",[tr(lang,"injectors")]:"injectors",[tr(lang,"guides")]:"guides",[tr(lang,"profile")]:"profile",[tr(lang,"language")]:"language",[tr(lang,"admin")]:"admin" };
   const action=labels[text];
   if(action==="scripts"||action==="injectors"||action==="guides") return send(env,chat,tr(lang,"choose_item"),{reply_markup:catalogMarkup(action,lang)});
-  if(action==="profile") return send(env,chat,`👤 <b>${lang==="ru"?"Твой профиль":"Your profile"}</b>\nID: <code>${id}</code>\nLanguage: ${lang}`);
+  if(action==="profile") return send(env,chat,`👤 <b>${lang==="ru"?"Твой профиль":"Your profile"}</b>\nID: <code>${id}</code>\n${lang==="ru"?"Язык":"Language"}: ${lang}`);
   if(action==="language") return send(env,chat,tr(lang,"choose_language"),{reply_markup:kb([[btn("🇷🇺 Русский","lang:ru"),btn("🇬🇧 English","lang:en")]])});
   if(action==="admin"&&admins(env).has(String(id))) return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(lang==="ru"?"📢 Создать пост в канал":"📢 Create channel post","adm:channel_post")],[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")]])});
   return send(env,chat,tr(lang,"choose"));
@@ -182,12 +247,20 @@ async function handleCallback(env,c) {
     } else await send(env,chat,text,extra);
     if(cat==="scripts"&&slug==="mm2") await send(env,chat,'<pre><code>loadstring(game:HttpGet("https://raw.githubusercontent.com/Liberator481993/MM2HUB/refs/heads/main/MM2HUB"))()</code></pre>');
     else if(item.file_id) {
-      const file=await tg(env,"sendDocument",{chat_id:chat,document:item.file_id,caption:item.file_name||undefined});
-      if(!file.ok) console.error("Document delivery failed",file.description);
+      const fileName=item.file_name||"download";
+      const extension=fileName.includes(".")?fileName.split(".").pop().toLowerCase():"";
+      const textExtensions=new Set(["txt","lua","luau","py","js","json","xml","md"]);
+      const sentAsCode=textExtensions.has(extension)
+        ? await sendTextFileAsCode(env,chat,item.file_id)
+        : false;
+      if(!sentAsCode) {
+        const file=await tg(env,"sendDocument",{chat_id:chat,document:item.file_id,caption:fileName});
+        if(!file.ok) console.error("Document delivery failed",file.description);
+      }
     }
     return;
   }
-  if(data==="profile")return send(env,chat,`👤 <b>Profile</b>\nID: <code>${id}</code>\nLanguage: ${lang}`);
+  if(data==="profile")return send(env,chat,`👤 <b>${lang==="ru"?"Твой профиль":"Your profile"}</b>\nID: <code>${id}</code>\n${lang==="ru"?"Язык":"Language"}: ${lang}`);
   if(!admins(env).has(String(id))) return send(env,chat,tr(lang,"denied"));
   if(data==="adm:home")return send(env,chat,tr(lang,"admin_title"),{reply_markup:kb([[btn(lang==="ru"?"📢 Создать пост в канал":"📢 Create channel post","adm:channel_post")],[btn(tr(lang,"content"),"adm:content")],[btn(tr(lang,"broadcast"),"adm:broadcast")],[btn(tr(lang,"stats"),"adm:stats")],[btn(tr(lang,"back"),"nav:home")]])});
   if(data==="adm:content")return send(env,chat,tr(lang,"cat"),{reply_markup:kb([["scripts","injectors","guides"].map(x=>btn(tr(lang,x),`adm:cat:${x}`)),[btn(tr(lang,"back"),"adm:home")]])});

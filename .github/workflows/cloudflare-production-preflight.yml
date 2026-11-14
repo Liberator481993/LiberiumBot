@@ -37,6 +37,14 @@ jobs:
               exit 1
             fi
           done
+          if ! [[ "$WEBHOOK_SECRET" =~ ^[A-Za-z0-9_-]{32,256}$ ]]; then
+            echo "::error::WEBHOOK_SECRET must be 32-256 URL-safe characters (A-Z, a-z, 0-9, underscore or hyphen)."
+            exit 1
+          fi
+          if ! [[ "$ADMIN_IDS" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+            echo "::error::ADMIN_IDS must be comma-separated numeric Telegram user IDs."
+            exit 1
+          fi
           if [ "$D1_MIGRATION_VERIFIED" = "true" ] && [ "$D1_CLEAN_START_VERIFIED" = "true" ]; then
             echo "::error::Choose exactly one D1 path: migration or clean start, not both."
             exit 1
@@ -75,7 +83,7 @@ jobs:
           get_me="$(curl --fail --silent --show-error "https://api.telegram.org/bot$BOT_TOKEN/getMe")"
           GET_ME="$get_me" node -e '
             const r = JSON.parse(process.env.GET_ME);
-            if (!r.ok || r.result?.username?.toLowerCase() !== "liberiumh ub bot".replaceAll(" ","")) {
+            if (!r.ok || r.result?.username?.toLowerCase() !== "liberiumhubbot") {
               console.error("BOT_TOKEN does not identify @LiberiumHubBot.");
               process.exit(1);
             }

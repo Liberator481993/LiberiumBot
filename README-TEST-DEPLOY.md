@@ -1,6 +1,6 @@
 # Isolated test bot deployment
 
-This procedure is for the separate Telegram test bot only. It does not deploy the production Worker, change the production Telegram bot, or set any Telegram webhook.
+This procedure is for the separate Telegram test bot only. It does not deploy the production Worker, change the production Telegram bot, or alter the production Telegram webhook.
 
 ## Fixed test targets
 
@@ -32,10 +32,10 @@ Do not paste any bot token or webhook secret into chat, source files, workflow l
 
 1. Confirm the test bot is an administrator of the private test channel and can publish messages.
 2. Add the required GitHub variable and secrets above.
-3. Open **Actions → Deploy LiberiumBot TEST Worker → Run workflow**.
-4. Select branch `cloudflare-worker-port`; leave confirmation as `no` until all secrets are configured and the test deployment is intentionally approved.
-5. Selecting `yes` applies the schema only to `liberiumbot-test`, deploys only the Worker configured by `wrangler.test.toml`, and installs only the test bot secrets.
-6. The workflow deliberately does not call Telegram `setWebhook`. After checking `/healthz` and the test Worker, webhook setup is a separate step requiring explicit approval.
+3. Update the harmless marker file `.github/test-deploy-trigger` on branch `cloudflare-worker-port` and push that change. The workflow is triggered by a push that changes this file; it does not expose a manual `workflow_dispatch` button.
+4. The workflow validates the TEST-only configuration, applies the schema only to `liberiumbot-test`, deploys only the Worker configured by `wrangler.test.toml`, and installs only the TEST bot secrets.
+5. The workflow then calls Telegram `setWebhook` using `TEST_BOT_TOKEN` and verifies the resulting URL with `getWebhookInfo`. This affects only the isolated TEST bot. It does not use the production token or change the production webhook.
+6. After deployment, check `https://liberiumbot-test.pavloosakura.workers.dev/healthz` and manually test the Telegram scenarios listed in `README-CLOUDFLARE.md`.
 
 Expected test Worker URL: `https://liberiumbot-test.pavloosakura.workers.dev`.
 

@@ -74,8 +74,6 @@ Before first deployment:
    - `WEBHOOK_SECRET` (32-256 URL-safe random characters).
    Do not put any token or secret in Git or ordinary Worker variables. The gated deploy workflow installs these as encrypted Worker secrets after deployment.
 5. Configure repository variables `CLOUDFLARE_ACCOUNT_ID` and `D1_DATABASE_ID`.
-   - For a restored database, set `D1_MIGRATION_VERIFIED=true` only after importing the real SQLite export and verifying row counts.
-   - For the approved empty start, set `D1_CLEAN_START_VERIFIED=true` only after applying the schema and confirming the expected empty tables/counts.
 6. Set exactly one verification variable: `D1_MIGRATION_VERIFIED=true` after a verified data import, or `D1_CLEAN_START_VERIFIED=true` after manually confirming the clean-start schema and zero row counts.
 7. Run `.github/workflows/cloudflare-production-preflight.yml` from branch `cloudflare-worker-port`. It is read-only: it checks the production bot identity, confirms no webhook is set, validates the D1 tables/counts and checks configuration. It does not deploy, write D1, change secrets, or alter Telegram settings.
 8. Only after preflight passes, the manual workflow `.github/workflows/cloudflare-deploy.yml` can be run with `confirm_deploy=yes`. It deploys the production Worker, installs encrypted Worker secrets and verifies `/healthz`, but deliberately leaves the production Telegram webhook unset. This is a separate deployment approval.
@@ -98,17 +96,17 @@ and consider Workers Paid if real traffic exceeds the free quotas.
 - The schema and offline migration utility have automated tests. The schema is applied to the remote D1 database; the four application tables are visible and their verified row counts are all zero.
 - The isolated TEST Worker has been deployed to `liberiumbot-test`; GitHub Actions configured and verified the webhook for `TEST_BOT_TOKEN` only. The owner has now reported that the live interactive test of the TEST bot is complete and all tested flows work.
 - Broadcast retry handling is basic; failed recipients are counted but not persisted for a retry campaign.
-- Channel button styling is ported from the Python bot and covered by offline tests; live Telegram compatibility still needs verification with a non-production test bot.
+- The owner reports that the full interactive TEST-bot acceptance pass is complete and the tested Telegram flows work.
 - The existing SQLite database is not automatically synchronized with D1.
 - The production D1 database ID is configured in `wrangler.toml`; remote schema initialization and the empty-table check were previously verified. The live TEST-bot acceptance pass is complete per the owner. The read-only production preflight and gated production deployment workflows are prepared, but neither has been run. Production Worker deployment and production webhook setup remain separate operations.
 
-## Cloudflare setup (do not deploy until the read-only production preflight passes)
-1. Create a D1 database named `liberiumbot`.
-2. Apply `cloudflare/schema.sql` using `npx wrangler d1 execute liberiumbot --remote --file=cloudflare/schema.sql`.
-3. Put the D1 database ID into `wrangler.toml`.
-4. Set Worker secrets: `npx wrangler secret put BOT_TOKEN`, `ADMIN_IDS`, and `WEBHOOK_SECRET`.
-5. Install dependencies and deploy with `npm install` then `npm run deploy`.
-6. Set Telegram webhook to `https://<worker-host>/telegram/webhook` with the same secret token. Do this only after the Worker is deployed and verified.
-7. Disable the old polling process before setting the webhook. Telegram does not allow polling and webhook delivery at the same time for one bot token.
+## Production deployment workflow
 
-Do not deploy until D1 is created, its ID is configured, Worker secrets are set, and either the SQLite import or the intentionally empty clean-start schema/counts have been verified. The deployment workflow does not recover a missing SQLite file, import user data, or set Telegram's webhook.
+Use the gated GitHub Actions workflows from branch `cloudflare-worker-port`:
+
+1. Run `.github/workflows/cloudflare-production-preflight.yml` first. It performs read-only checks only.
+2. If preflight passes, deployment can be started separately with `confirm_deploy=yes` in `.github/workflows/cloudflare-deploy.yml`. This deploys the Worker, installs the encrypted secrets and checks `/healthz`.
+3. This deployment workflow does **not** call Telegram `setWebhook`, does not stop or start Python polling, and does not change the bot's Telegram delivery mode.
+4. Production webhook cutover is a separate operation requiring separate explicit approval. Do not run polling and webhook delivery simultaneously for the same bot token.
+
+The production preflight and deployment workflows are intentionally restricted to `cloudflare-worker-port`. The default `confirm_deploy` value is `no`.

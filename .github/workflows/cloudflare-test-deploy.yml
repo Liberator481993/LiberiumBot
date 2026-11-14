@@ -75,6 +75,21 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npx wrangler deploy --config wrangler.test.toml
 
+      - name: Verify TEST Worker health and D1 connectivity
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --fail --silent --show-error --retry 5 --retry-delay 2 --retry-connrefused \
+            "https://liberiumbot-test.pavloosakura.workers.dev/healthz")"
+          RESPONSE="$response" node -e '
+            const result = JSON.parse(process.env.RESPONSE);
+            if (result.status !== "ok" || result.database !== "ok") {
+              console.error("TEST Worker health check failed.");
+              process.exit(1);
+            }
+            console.log("TEST Worker is healthy and D1 is reachable.");
+          '
+
       - name: Configure encrypted secrets on TEST Worker only
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

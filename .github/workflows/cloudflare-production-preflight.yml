@@ -1,0 +1,142 @@
+name: LiberiumBot production preflight (read-only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liberiumbot-production-preflight
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: ${{ github.ref == 'refs/heads/cloudflare-worker-port' }}
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+      D1_MIGRATION_VERIFIED: ${{ vars.D1_MIGRATION_VERIFIED }}
+      D1_CLEAN_START_VERIFIED: ${{ vars.D1_CLEAN_START_VERIFIED }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+      WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+    steps:
+      - name: Check out migration branch
+        uses: actions/checkout@v4
+
+      - name: Validate required settings without printing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN D1_DATABASE_ID BOT_TOKEN ADMIN_IDS WEBHOOK_SECRET; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub Actions setting: $name"
+              exit 1
+            fi
+          done
+          if ! [[ "$WEBHOOK_SECRET" =~ ^[A-Za-z0-9_-]{32,256}$ ]]; then
+            echo "::error::WEBHOOK_SECRET must be 32-256 URL-safe characters (A-Z, a-z, 0-9, underscore or hyphen)."
+            exit 1
+          fi
+          if ! [[ "$ADMIN_IDS" =~ ^[0-9]+(,[0-9]+)*$ ]]; then
+            echo "::error::ADMIN_IDS must be comma-separated numeric Telegram user IDs."
+            exit 1
+          fi
+          if [ "$D1_MIGRATION_VERIFIED" = "true" ] && [ "$D1_CLEAN_START_VERIFIED" = "true" ]; then
+            echo "::error::Choose exactly one D1 path: migration or clean start, not both."
+            exit 1
+          fi
+          if [ "$D1_MIGRATION_VERIFIED" != "true" ] && [ "$D1_CLEAN_START_VERIFIED" != "true" ]; then
+            echo "::error::Set D1_MIGRATION_VERIFIED=true or D1_CLEAN_START_VERIFIED=true after manually verifying D1."
+            exit 1
+          fi
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const config = fs.readFileSync("wrangler.toml", "utf8");
+            const id = process.env.D1_DATABASE_ID;
+            if (!config.includes(`database_id = "${id}"`)) {
+              console.error("D1_DATABASE_ID does not match wrangler.toml.");
+              process.exit(1);
+            }
+            if (!/name = "liberiumbot"/.test(config)) {
+              console.error("Production Worker name mismatch.");
+              process.exit(1);
+            }
+            console.log("Production Worker and D1 identifiers match.");
+          '
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Wrangler
+        run: npm install --no-save wrangler@^4
+
+      - name: Verify production bot identity and confirm no webhook is configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          get_me="$(curl --fail --silent --show-error "https://api.telegram.org/bot$BOT_TOKEN/getMe")"
+          GET_ME="$get_me" node -e '
+            const r = JSON.parse(process.env.GET_ME);
+            if (!r.ok || r.result?.username?.toLowerCase() !== "liberiumhubbot") {
+              console.error("BOT_TOKEN does not identify @LiberiumHubBot.");
+              process.exit(1);
+            }
+            console.log("Verified target bot: @" + r.result.username);
+          '
+          webhook="$(curl --fail --silent --show-error "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo")"
+          WEBHOOK_INFO="$webhook" node -e '
+            const r = JSON.parse(process.env.WEBHOOK_INFO);
+            if (!r.ok) {
+              console.error("Could not read production bot webhook status.");
+              process.exit(1);
+            }
+            if (r.result?.url) {
+              console.error("A production webhook is already configured. No changes were made.");
+              process.exit(1);
+            }
+            console.log("Production bot currently has no webhook; no Telegram settings were changed.");
+          '
+
+      - name: Verify D1 schema and report row counts (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          query="SELECT 'users' AS table_name, COUNT(*) AS row_count FROM users UNION ALL SELECT 'content_items', COUNT(*) FROM content_items UNION ALL SELECT 'user_state', COUNT(*) FROM user_state UNION ALL SELECT 'processed_updates', COUNT(*) FROM processed_updates;"
+          npx wrangler d1 execute liberiumbot --remote --command="$query" --json > "$RUNNER_TEMP/d1-counts.json"
+          D1_COUNTS_FILE="$RUNNER_TEMP/d1-counts.json" node --input-type=module -e '
+            import fs from "node:fs";
+            const root = JSON.parse(fs.readFileSync(process.env.D1_COUNTS_FILE, "utf8"));
+            const found = [];
+            const walk = (v) => {
+              if (Array.isArray(v)) return v.forEach(walk);
+              if (!v || typeof v !== "object") return;
+              if (typeof v.table_name === "string" && v.row_count !== undefined) {
+                found.push({name:v.table_name, count:Number(v.row_count)});
+              }
+              Object.values(v).forEach(walk);
+            };
+            walk(root);
+            const expected = ["users","content_items","user_state","processed_updates"];
+            const map = new Map(found.map(x => [x.name,x.count]));
+            if (expected.some(name => !map.has(name))) {
+              console.error("D1 query did not return all expected application tables.");
+              process.exit(1);
+            }
+            for (const name of expected) console.log(name + ": " + map.get(name));
+            if (process.env.D1_CLEAN_START_VERIFIED === "true" &&
+                expected.some(name => map.get(name) !== 0)) {
+              console.error("Clean-start flag is set but production D1 is no longer empty. Stop and review before deployment.");
+              process.exit(1);
+            }
+            console.log("Production D1 schema is reachable; query was read-only.");
+          '
+
+      - name: Report read-only preflight result
+        run: |
+          echo "Preflight passed. No Worker deployment, D1 writes, secret changes, polling changes, or Telegram webhook changes were performed."

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm_deploy:
-        description: "Set to yes only after D1 is initialized, the chosen clean-start/data-migration path is verified, and Worker secrets are configured."
+        description: "Set to yes only after the read-only production preflight passes and you explicitly approve deploying the Worker (webhook will remain unset)."
         required: true
         type: choice
         options:
@@ -21,38 +21,80 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ inputs.confirm_deploy == 'yes' }}
+    if: ${{ github.ref == 'refs/heads/cloudflare-worker-port' && inputs.confirm_deploy == 'yes' }}
     runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+      D1_MIGRATION_VERIFIED: ${{ vars.D1_MIGRATION_VERIFIED }}
+      D1_CLEAN_START_VERIFIED: ${{ vars.D1_CLEAN_START_VERIFIED }}
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+      WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
     steps:
       - name: Check out migration branch
         uses: actions/checkout@v4
 
-      - name: Validate Cloudflare configuration
-        env:
-          CF_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
-          D1_MIGRATION_VERIFIED: ${{ vars.D1_MIGRATION_VERIFIED }}
-          D1_CLEAN_START_VERIFIED: ${{ vars.D1_CLEAN_START_VERIFIED }}
+      - name: Validate production settings and bot identity
+        shell: bash
         run: |
           set -euo pipefail
-          test -n "$CF_ACCOUNT_ID" || { echo "::error::Set repository variable CLOUDFLARE_ACCOUNT_ID."; exit 1; }
-          test -n "$CF_API_TOKEN" || { echo "::error::Set repository secret CLOUDFLARE_API_TOKEN."; exit 1; }
-          test -n "$D1_DATABASE_ID" || { echo "::error::Set repository variable D1_DATABASE_ID."; exit 1; }
-          if [ "$D1_MIGRATION_VERIFIED" != "true" ] && [ "$D1_CLEAN_START_VERIFIED" != "true" ]; then
-            echo "::error::Set D1_MIGRATION_VERIFIED=true after importing and checking real data, or D1_CLEAN_START_VERIFIED=true after confirming the intentionally empty clean-start database."
+          for name in CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN D1_DATABASE_ID BOT_TOKEN ADMIN_IDS WEBHOOK_SECRET; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Missing required GitHub Actions setting: $name"
+              exit 1
+            fi
+          done
+          if [ "$D1_MIGRATION_VERIFIED" = "true" ] && [ "$D1_CLEAN_START_VERIFIED" = "true" ]; then
+            echo "::error::Choose exactly one D1 path: migration or clean start, not both."
             exit 1
           fi
-          if grep -q "REPLACE_WITH_D1_DATABASE_ID" wrangler.toml; then
-            sed -i "s/REPLACE_WITH_D1_DATABASE_ID/$D1_DATABASE_ID/" wrangler.toml
+          if [ "$D1_MIGRATION_VERIFIED" != "true" ] && [ "$D1_CLEAN_START_VERIFIED" != "true" ]; then
+            echo "::error::Set D1_MIGRATION_VERIFIED=true or D1_CLEAN_START_VERIFIED=true after verifying production D1."
+            exit 1
           fi
-          grep -q "$D1_DATABASE_ID" wrangler.toml
-          echo "Cloudflare deployment prerequisites are present."
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const config = fs.readFileSync("wrangler.toml", "utf8");
+            if (!config.includes(`database_id = "${process.env.D1_DATABASE_ID}"`)) {
+              console.error("D1_DATABASE_ID does not match wrangler.toml.");
+              process.exit(1);
+            }
+            if (!/name = "liberiumbot"/.test(config)) {
+              console.error("Production Worker name mismatch.");
+              process.exit(1);
+            }
+            console.log("Production Worker and D1 identifiers match.");
+          '
+          get_me="$(curl --fail --silent --show-error "https://api.telegram.org/bot$BOT_TOKEN/getMe")"
+          GET_ME="$get_me" node -e '
+            const r = JSON.parse(process.env.GET_ME);
+            if (!r.ok || r.result?.username?.toLowerCase() !== "liberiumhubbot") {
+              console.error("BOT_TOKEN does not identify @LiberiumHubBot.");
+              process.exit(1);
+            }
+            console.log("Verified production bot identity.");
+          '
+          webhook="$(curl --fail --silent --show-error "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo")"
+          WEBHOOK_INFO="$webhook" node -e '
+            const r = JSON.parse(process.env.WEBHOOK_INFO);
+            if (!r.ok || r.result?.url) {
+              console.error("Production webhook is not empty or its status could not be verified. Aborting without changing Telegram.");
+              process.exit(1);
+            }
+            console.log("Confirmed production webhook is currently unset.");
+          '
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Install Wrangler
         run: npm install --no-save wrangler@^4
@@ -64,13 +106,51 @@ jobs:
           python -m unittest cloudflare.test_schema cloudflare.test_export_sqlite_to_d1 -v
 
       - name: Apply idempotent D1 schema
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npx wrangler d1 execute liberiumbot --remote --file=cloudflare/schema.sql
 
-      - name: Deploy Worker
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - name: Deploy production Worker
         run: npx wrangler deploy
+
+      - name: Configure encrypted production Worker secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$BOT_TOKEN" | npx wrangler secret put BOT_TOKEN
+          printf '%s' "$ADMIN_IDS" | npx wrangler secret put ADMIN_IDS
+          printf '%s' "$WEBHOOK_SECRET" | npx wrangler secret put WEBHOOK_SECRET
+          echo "Production Worker secrets configured; values were not printed."
+
+      - name: Verify production Worker health
+        shell: bash
+        run: |
+          set -euo pipefail
+          response="$(curl --fail --silent --show-error --retry 5 --retry-delay 2 --retry-connrefused \
+            "https://liberiumbot.pavloosakura.workers.dev/healthz")"
+          RESPONSE="$response" node -e '
+            const r = JSON.parse(process.env.RESPONSE);
+            if (r.status !== "ok" || r.database !== "ok") {
+              console.error("Production Worker health check failed.");
+              process.exit(1);
+            }
+            console.log("Production Worker and D1 health check passed.");
+          '
+
+      - name: Confirm production webhook remains unset
+        shell: bash
+        run: |
+          set -euo pipefail
+          webhook="$(curl --fail --silent --show-error "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo")"
+          WEBHOOK_INFO="$webhook" node -e '
+            const r = JSON.parse(process.env.WEBHOOK_INFO);
+            if (!r.ok || r.result?.url) {
+              console.error("Unexpected production webhook state. Do not start polling or attempt another switch until reviewed.");
+              process.exit(1);
+            }
+            console.log("Confirmed: @LiberiumHubBot webhook remains unset. Production bot has not been switched.");
+          '
+
+      - name: Report deployment boundary
+        run: |
+          echo "Production Worker deployed and health-checked."
+          echo "Telegram webhook was not configured; this workflow does not start or stop polling."
+          echo "A separate explicit approval is required for the production webhook cutover."
